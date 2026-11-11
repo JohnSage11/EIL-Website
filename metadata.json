@@ -1,0 +1,6 @@
+{
+  "name": "Emmadios Industrial Limited (EIL)",
+  "description": "Heavy Equipment Hiring, Plant Leasing (Forklifts, Excavators, Dozers, Cranes, Backhoes) and Industrial Haulage Services (Lowbeds, Flatbeds, Tankers, Pneumatic & Dump Trucks) in Port Harcourt and Warri, Nigeria.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
