@@ -201,37 +201,61 @@ async function startServer() {
     }
   });
   const CMS_FILE = path.join(__dirname, "cms-store.json");
+  const setNoCacheHeaders = (res) => {
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+  };
   app.get("/api/cms", (_req, res) => {
+    setNoCacheHeaders(res);
     try {
       if (fs.existsSync(CMS_FILE)) {
         const raw = fs.readFileSync(CMS_FILE, "utf-8");
         const cmsData = JSON.parse(raw);
-        return res.json({ ok: true, isDefault: false, cmsData });
+        const isDefault = Boolean(cmsData?._isFactoryDefault);
+        return res.json({
+          ok: true,
+          isDefault,
+          updatedAt: cmsData?.updatedAt || Date.now(),
+          cmsData
+        });
       }
     } catch (err) {
       console.error("Failed to read CMS store:", err);
     }
-    return res.json({ ok: true, isDefault: true, cmsData: null });
+    return res.json({ ok: true, isDefault: true, updatedAt: Date.now(), cmsData: null });
   });
   app.post("/api/cms", (req, res) => {
+    setNoCacheHeaders(res);
     try {
-      const { cmsData } = req.body || {};
+      const { action, cmsData } = req.body || {};
       if (!cmsData || typeof cmsData !== "object") {
         return res.status(400).json({ ok: false, error: "Invalid cmsData payload" });
       }
-      fs.writeFileSync(CMS_FILE, JSON.stringify(cmsData, null, 2), "utf-8");
-      return res.json({ ok: true, isDefault: false, cmsData });
+      const stamped = {
+        ...cmsData,
+        updatedAt: typeof cmsData.updatedAt === "number" ? cmsData.updatedAt : Date.now(),
+        _isFactoryDefault: action === "reset" || Boolean(cmsData._isFactoryDefault)
+      };
+      fs.writeFileSync(CMS_FILE, JSON.stringify(stamped, null, 2), "utf-8");
+      return res.json({
+        ok: true,
+        isDefault: stamped._isFactoryDefault,
+        updatedAt: stamped.updatedAt,
+        cmsData: stamped
+      });
     } catch (err) {
       console.error("Failed to write CMS store:", err);
       return res.status(500).json({ ok: false, error: "Failed to save CMS state" });
     }
   });
   app.delete("/api/cms", (_req, res) => {
+    setNoCacheHeaders(res);
     try {
       if (fs.existsSync(CMS_FILE)) {
         fs.unlinkSync(CMS_FILE);
       }
-      return res.json({ ok: true, isDefault: true, cmsData: null });
+      return res.json({ ok: true, isDefault: true, updatedAt: Date.now(), cmsData: null });
     } catch (err) {
       console.error("Failed to delete CMS store:", err);
       return res.status(500).json({ ok: false, error: "Failed to reset CMS state" });

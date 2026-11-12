@@ -42,6 +42,8 @@ export type EilScalarFieldKey = Exclude<
   | 'pointCardRules'
   | 'coreValues'
   | 'safetyCommitments'
+  | 'updatedAt'
+  | '_isFactoryDefault'
 >;
 
 export interface CmsFieldDescriptor {

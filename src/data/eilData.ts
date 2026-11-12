@@ -4,7 +4,7 @@
  */
 
 export const EIL_SLOGAN =
-  'If you can think it, it is achievable. If it is achievable, its is doable with EIL!';
+  'If you can think it, it is doable. If it is doable, it is achievable with EIL!';
 
 export interface StockItem {
   id: string;

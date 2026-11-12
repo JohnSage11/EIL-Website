@@ -19,7 +19,7 @@ import {
   BranchOffice,
 } from './eilData';
 
-export const CMS_STORAGE_KEY = 'eil_site_cms_data_v5_tagline_priority';
+export const CMS_STORAGE_KEY = 'eil_site_cms_data_v6_tagline_doable';
 export const ADMIN_SESSION_STORAGE_KEY = 'eil_stealth_admin_auth_v1';
 
 export interface CmsDeliveryOptionSpec {
@@ -212,6 +212,10 @@ export interface EilCmsData {
   pointCardRules: string[];
   coreValues: CmsCoreValueItem[];
   safetyCommitments: string[];
+
+  // Cross-device synchronization metadata
+  updatedAt?: number;
+  _isFactoryDefault?: boolean;
 }
 
 export const DEFAULT_DELIVERY_OPTIONS: CmsDeliveryOptionSpec[] = [
@@ -715,9 +719,17 @@ export function sanitizeCmsData(rawInput: unknown): EilCmsData {
     return { ...DEFAULT_EIL_CMS_DATA };
   }
 
+  const normalizedBrandSlogan =
+    typeof raw.brandSlogan === 'string' &&
+    raw.brandSlogan.trim().length > 0 &&
+    !/If you can think it,\s*it is achievable/i.test(raw.brandSlogan)
+      ? raw.brandSlogan
+      : EIL_SLOGAN;
+
   return {
     ...DEFAULT_EIL_CMS_DATA,
     ...raw,
+    brandSlogan: normalizedBrandSlogan,
     customTexts:
       raw.customTexts && typeof raw.customTexts === 'object' && !Array.isArray(raw.customTexts)
         ? (raw.customTexts as Record<string, string>)
@@ -774,17 +786,19 @@ export function sanitizeCmsData(rawInput: unknown): EilCmsData {
       Array.isArray(raw.safetyCommitments) && raw.safetyCommitments.length > 0
         ? raw.safetyCommitments
         : DEFAULT_EIL_CMS_DATA.safetyCommitments,
+    updatedAt: typeof raw.updatedAt === 'number' ? raw.updatedAt : undefined,
+    _isFactoryDefault: Boolean(raw._isFactoryDefault),
   };
 }
 
 export function loadLocalCmsData(): EilCmsData {
   try {
     const raw = localStorage.getItem(CMS_STORAGE_KEY);
-    if (!raw) return { ...DEFAULT_EIL_CMS_DATA };
+    if (!raw) return structuredClone(DEFAULT_EIL_CMS_DATA);
     const parsed = JSON.parse(raw);
     return sanitizeCmsData(parsed);
   } catch {
-    return { ...DEFAULT_EIL_CMS_DATA };
+    return structuredClone(DEFAULT_EIL_CMS_DATA);
   }
 }
 
@@ -797,65 +811,122 @@ export function saveLocalCmsData(data: EilCmsData): void {
 }
 
 export async function fetchSharedCmsData(): Promise<EilCmsData | null> {
-  const endpoints = ['/api/cms', '/cms-api.php'];
+  const endpoints = ['./cms-api.php', '/cms-api.php', '/api/cms'];
+  const cacheBust = `?t=${Date.now()}`;
+
   for (const endpoint of endpoints) {
     try {
-      const res = await fetch(endpoint, {
+      const res = await fetch(`${endpoint}${cacheBust}`, {
         method: 'GET',
-        headers: { Accept: 'application/json' },
+        headers: {
+          Accept: 'application/json',
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          Pragma: 'no-cache',
+        },
         cache: 'no-store',
       });
       if (!res.ok) continue;
       const json = await res.json();
       const payload = json?.cmsData || json?.data || json;
+
+      // Case 1: Server returned a full CMS state (either custom edits or restored factory defaults)
       if (payload && typeof payload === 'object' && 'heroTitlePrefix' in payload) {
+        if (json?.isDefault === true || payload._isFactoryDefault === true) {
+          const cleanDefault: EilCmsData = {
+            ...structuredClone(DEFAULT_EIL_CMS_DATA),
+            updatedAt: typeof payload.updatedAt === 'number' ? payload.updatedAt : Date.now(),
+            _isFactoryDefault: true,
+          };
+          try {
+            localStorage.removeItem(CMS_STORAGE_KEY);
+          } catch {
+            // ignore
+          }
+          saveLocalCmsData(cleanDefault);
+          return cleanDefault;
+        }
         const sanitized = sanitizeCmsData(payload);
         saveLocalCmsData(sanitized);
         return sanitized;
       }
+
+      // Case 2: Server explicitly indicates factory default state (isDefault: true)
+      if (json && json.ok === true && json.isDefault === true) {
+        const cleanDefault: EilCmsData = {
+          ...structuredClone(DEFAULT_EIL_CMS_DATA),
+          updatedAt: typeof json.updatedAt === 'number' ? json.updatedAt : Date.now(),
+          _isFactoryDefault: true,
+        };
+        try {
+          localStorage.removeItem(CMS_STORAGE_KEY);
+        } catch {
+          // ignore
+        }
+        saveLocalCmsData(cleanDefault);
+        return cleanDefault;
+      }
     } catch {
-      // Try next endpoint or fallback to localStorage
+      // Try next endpoint
     }
   }
   return null;
 }
 
 export async function saveSharedCmsData(
-  data: EilCmsData
+  data: EilCmsData,
+  action: 'save' | 'reset' = 'save'
 ): Promise<{ persistedRemote: boolean; endpoint?: string }> {
-  saveLocalCmsData(data);
-  const endpoints = ['/api/cms', '/cms-api.php'];
+  const stampedData: EilCmsData = {
+    ...data,
+    updatedAt: Date.now(),
+    _isFactoryDefault: action === 'reset' || Boolean(data._isFactoryDefault),
+  };
+  saveLocalCmsData(stampedData);
+
+  const endpoints = ['./cms-api.php', '/cms-api.php', '/api/cms'];
+  let persistedRemote = false;
+  let matchedEndpoint: string | undefined;
+
   for (const endpoint of endpoints) {
     try {
-      const res = await fetch(endpoint, {
+      const res = await fetch(`${endpoint}?t=${Date.now()}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({ action: 'save', cmsData: data }),
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          Pragma: 'no-cache',
+        },
+        cache: 'no-store',
+        body: JSON.stringify({
+          action,
+          updatedAt: stampedData.updatedAt,
+          cmsData: stampedData,
+        }),
       });
       if (res.ok) {
-        return { persistedRemote: true, endpoint };
+        persistedRemote = true;
+        if (!matchedEndpoint) matchedEndpoint = endpoint;
       }
     } catch {
       // Fallback to next endpoint
     }
   }
-  return { persistedRemote: false };
+  return { persistedRemote, endpoint: matchedEndpoint };
 }
 
 export async function resetSharedCmsData(): Promise<EilCmsData> {
-  const fresh = { ...DEFAULT_EIL_CMS_DATA };
-  saveLocalCmsData(fresh);
-  const endpoints = ['/api/cms', '/cms-api.php'];
-  for (const endpoint of endpoints) {
-    try {
-      await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({ action: 'reset', cmsData: fresh }),
-      });
-    } catch {
-      // Ignore network errors
-    }
+  const fresh: EilCmsData = {
+    ...structuredClone(DEFAULT_EIL_CMS_DATA),
+    updatedAt: Date.now(),
+    _isFactoryDefault: true,
+  };
+  try {
+    localStorage.removeItem(CMS_STORAGE_KEY);
+  } catch {
+    // ignore
   }
+  saveLocalCmsData(fresh);
+  await saveSharedCmsData(fresh, 'reset');
   return fresh;
 }

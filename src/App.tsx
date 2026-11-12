@@ -120,7 +120,8 @@ const NAV_ITEMS: { id: PageId; label: string }[] = [
   { id: 'about-us', label: 'ABOUT US' },
 ];
 
-const BASKET_STORAGE_KEY = 'eil_enquiry_basket_v2';
+const BASKET_STORAGE_KEY = 'eil_enquiry_basket_v3';
+const LEGACY_BASKET_STORAGE_KEY = 'eil_enquiry_basket_v2';
 const QUOTES_STORAGE_KEY = 'eil_local_quotes_v2';
 const ENQUIRIES_STORAGE_KEY = 'eil_local_enquiries_v2';
 
@@ -321,18 +322,19 @@ export default function App() {
   const heroSecondaryBottomY = useTransform(scrollY, [0, 700], [0, -24]);
   const expertiseCardY = useTransform(scrollY, [200, 1100], [28, -32]);
 
-  // Basket state
+  // Basket state (defaults to 0 items on every new visit)
   const [basket, setBasket] = useState<BasketEntry[]>(() => {
     try {
+      localStorage.removeItem(LEGACY_BASKET_STORAGE_KEY);
       const raw = localStorage.getItem(BASKET_STORAGE_KEY);
-      if (raw) return JSON.parse(raw);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) return parsed;
+      }
     } catch {
       // ignore
     }
-    const defaultItems = STOCK_CATALOGUE.filter((item) =>
-      ['fk-5t-diesel', 'hl-lowbed-40t-60t'].includes(item.id)
-    );
-    return defaultItems.map((item) => ({ item, quantity: 1 }));
+    return [];
   });
 
   const [localQuotes, setLocalQuotes] = useState<QuoteRecord[]>(() => {
