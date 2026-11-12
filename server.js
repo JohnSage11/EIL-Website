@@ -201,45 +201,112 @@ async function startServer() {
     }
   });
   const CMS_FILE = path.join(__dirname, "cms-store.json");
+  const PUBLIC_CMS_FILE = path.join(__dirname, "public", "cms-data.json");
   const setNoCacheHeaders = (res) => {
     res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
     res.setHeader("Pragma", "no-cache");
     res.setHeader("Expires", "0");
   };
+  const offloadServerBase64Images = (val) => {
+    if (typeof val === "string") {
+      const match = val.match(/^data:image\/(png|jpe?g|webp|gif);base64,(.+)$/i);
+      if (match) {
+        let ext = match[1].toLowerCase();
+        if (ext === "jpeg") ext = "jpg";
+        try {
+          const buf = Buffer.from(match[2], "base64");
+          if (buf.length > 64) {
+            const hash = buf.subarray(0, 32).toString("hex").slice(0, 16) + "_" + buf.length;
+            const fileName = `cms_img_${hash}.${ext}`;
+            const filePath = path.join(UPLOADS_DIR, fileName);
+            if (!fs.existsSync(filePath)) {
+              fs.writeFileSync(filePath, buf);
+            }
+            const publicUploadsDir = path.join(__dirname, "public", "uploads");
+            if (!fs.existsSync(publicUploadsDir)) {
+              fs.mkdirSync(publicUploadsDir, { recursive: true });
+            }
+            const publicFilePath = path.join(publicUploadsDir, fileName);
+            if (!fs.existsSync(publicFilePath)) {
+              fs.writeFileSync(publicFilePath, buf);
+            }
+            return `uploads/${fileName}`;
+          }
+        } catch {
+        }
+      }
+      return val;
+    }
+    if (Array.isArray(val)) {
+      return val.map((item) => offloadServerBase64Images(item));
+    }
+    if (val && typeof val === "object") {
+      const out = {};
+      for (const [k, v] of Object.entries(val)) {
+        out[k] = offloadServerBase64Images(v);
+      }
+      return out;
+    }
+    return val;
+  };
+  app.use("/uploads", express.static(UPLOADS_DIR));
   app.get("/api/cms", (_req, res) => {
     setNoCacheHeaders(res);
     try {
-      if (fs.existsSync(CMS_FILE)) {
-        const raw = fs.readFileSync(CMS_FILE, "utf-8");
+      const targetFile = fs.existsSync(CMS_FILE) ? CMS_FILE : fs.existsSync(PUBLIC_CMS_FILE) ? PUBLIC_CMS_FILE : null;
+      if (targetFile) {
+        const raw = fs.readFileSync(targetFile, "utf-8");
         const cmsData = JSON.parse(raw);
-        const isDefault = Boolean(cmsData?._isFactoryDefault);
-        return res.json({
-          ok: true,
-          isDefault,
-          updatedAt: cmsData?.updatedAt || Date.now(),
-          cmsData
-        });
+        if (cmsData && typeof cmsData === "object") {
+          const isDefault = Boolean(cmsData._isFactoryDefault);
+          const updatedAt = typeof cmsData.updatedAt === "number" ? cmsData.updatedAt : fs.statSync(targetFile).mtimeMs;
+          return res.json({
+            ok: true,
+            hasSavedState: true,
+            isDefault,
+            updatedAt,
+            cmsData: {
+              ...cmsData,
+              updatedAt,
+              _isFactoryDefault: isDefault
+            }
+          });
+        }
       }
     } catch (err) {
       console.error("Failed to read CMS store:", err);
     }
-    return res.json({ ok: true, isDefault: true, updatedAt: Date.now(), cmsData: null });
+    return res.json({
+      ok: true,
+      hasSavedState: false,
+      isDefault: false,
+      updatedAt: 0,
+      cmsData: null
+    });
   });
   app.post("/api/cms", (req, res) => {
     setNoCacheHeaders(res);
     try {
-      const { action, cmsData } = req.body || {};
+      const { action, updatedAt, cmsData } = req.body || {};
       if (!cmsData || typeof cmsData !== "object") {
         return res.status(400).json({ ok: false, error: "Invalid cmsData payload" });
       }
+      const processed = offloadServerBase64Images(cmsData);
+      const resolvedUpdatedAt = typeof updatedAt === "number" ? updatedAt : typeof processed.updatedAt === "number" ? processed.updatedAt : Date.now();
       const stamped = {
-        ...cmsData,
-        updatedAt: typeof cmsData.updatedAt === "number" ? cmsData.updatedAt : Date.now(),
-        _isFactoryDefault: action === "reset" || Boolean(cmsData._isFactoryDefault)
+        ...processed,
+        updatedAt: resolvedUpdatedAt,
+        _isFactoryDefault: action === "reset" || Boolean(processed._isFactoryDefault)
       };
-      fs.writeFileSync(CMS_FILE, JSON.stringify(stamped, null, 2), "utf-8");
+      const serialized = JSON.stringify(stamped, null, 2);
+      fs.writeFileSync(CMS_FILE, serialized, "utf-8");
+      try {
+        fs.writeFileSync(PUBLIC_CMS_FILE, serialized, "utf-8");
+      } catch {
+      }
       return res.json({
         ok: true,
+        hasSavedState: true,
         isDefault: stamped._isFactoryDefault,
         updatedAt: stamped.updatedAt,
         cmsData: stamped
@@ -252,12 +319,22 @@ async function startServer() {
   app.delete("/api/cms", (_req, res) => {
     setNoCacheHeaders(res);
     try {
-      if (fs.existsSync(CMS_FILE)) {
-        fs.unlinkSync(CMS_FILE);
+      const nowMs = Date.now();
+      const resetMarker = JSON.stringify({ _isFactoryDefault: true, updatedAt: nowMs }, null, 2);
+      fs.writeFileSync(CMS_FILE, resetMarker, "utf-8");
+      try {
+        fs.writeFileSync(PUBLIC_CMS_FILE, resetMarker, "utf-8");
+      } catch {
       }
-      return res.json({ ok: true, isDefault: true, updatedAt: Date.now(), cmsData: null });
+      return res.json({
+        ok: true,
+        hasSavedState: true,
+        isDefault: true,
+        updatedAt: nowMs,
+        cmsData: null
+      });
     } catch (err) {
-      console.error("Failed to delete CMS store:", err);
+      console.error("Failed to reset CMS store:", err);
       return res.status(500).json({ ok: false, error: "Failed to reset CMS state" });
     }
   });

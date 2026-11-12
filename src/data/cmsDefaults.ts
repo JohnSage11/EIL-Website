@@ -811,6 +811,9 @@ export function saveLocalCmsData(data: EilCmsData): void {
 }
 
 export async function fetchSharedCmsData(): Promise<EilCmsData | null> {
+  const localData = loadLocalCmsData();
+  const localUpdatedAt = typeof localData.updatedAt === 'number' ? localData.updatedAt : 0;
+
   const endpoints = ['./cms-api.php', '/cms-api.php', '/api/cms'];
   const cacheBust = `?t=${Date.now()}`;
 
@@ -826,68 +829,145 @@ export async function fetchSharedCmsData(): Promise<EilCmsData | null> {
         cache: 'no-store',
       });
       if (!res.ok) continue;
-      const json = await res.json();
-      const payload = json?.cmsData || json?.data || json;
 
-      // Case 1: Server returned a full CMS state (either custom edits or restored factory defaults)
-      if (payload && typeof payload === 'object' && 'heroTitlePrefix' in payload) {
-        if (json?.isDefault === true || payload._isFactoryDefault === true) {
-          const cleanDefault: EilCmsData = {
-            ...structuredClone(DEFAULT_EIL_CMS_DATA),
-            updatedAt: typeof payload.updatedAt === 'number' ? payload.updatedAt : Date.now(),
-            _isFactoryDefault: true,
-          };
-          try {
-            localStorage.removeItem(CMS_STORAGE_KEY);
-          } catch {
-            // ignore
-          }
-          saveLocalCmsData(cleanDefault);
-          return cleanDefault;
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json') && !contentType.includes('text/json')) {
+        // Skip if static server returned raw PHP source code instead of JSON
+        const text = await res.text();
+        if (text.trim().startsWith('<?php')) continue;
+        try {
+          JSON.parse(text);
+        } catch {
+          continue;
         }
-        const sanitized = sanitizeCmsData(payload);
-        saveLocalCmsData(sanitized);
-        return sanitized;
       }
 
-      // Case 2: Server explicitly indicates factory default state (isDefault: true)
-      if (json && json.ok === true && json.isDefault === true) {
+      const json = await res.clone().json().catch(async () => {
+        const rawText = await res.text();
+        return JSON.parse(rawText);
+      });
+
+      if (!json || json.ok !== true) continue;
+
+      const hasSavedState = json.hasSavedState !== false && (Boolean(json.cmsData) || json.isDefault === true);
+      const serverUpdatedAt =
+        typeof json.updatedAt === 'number'
+          ? json.updatedAt
+          : typeof json?.cmsData?.updatedAt === 'number'
+          ? json.cmsData.updatedAt
+          : 0;
+
+      // Case A: Server has no saved state file yet (e.g. fresh server or restarted container)
+      if (!hasSavedState || serverUpdatedAt === 0) {
+        if (localUpdatedAt > 0) {
+          // Device cache has a valid Admin state — facilitate persistence by re-seeding the server!
+          void saveSharedCmsData(
+            localData,
+            localData._isFactoryDefault ? 'reset' : 'save'
+          );
+          return localData;
+        }
+        return null;
+      }
+
+      // Case B: Device cache has a NEWER state than the server (localUpdatedAt > serverUpdatedAt)
+      if (localUpdatedAt > serverUpdatedAt) {
+        void saveSharedCmsData(
+          localData,
+          localData._isFactoryDefault ? 'reset' : 'save'
+        );
+        return localData;
+      }
+
+      // Case C: Server has an equal or NEWER state than the device (serverUpdatedAt >= localUpdatedAt)
+      const payload = json?.cmsData || json?.data;
+
+      // Subcase C1: Server state is an explicit "Restore Factory Defaults" action
+      if (json.isDefault === true || payload?._isFactoryDefault === true) {
         const cleanDefault: EilCmsData = {
           ...structuredClone(DEFAULT_EIL_CMS_DATA),
-          updatedAt: typeof json.updatedAt === 'number' ? json.updatedAt : Date.now(),
+          updatedAt: serverUpdatedAt || Date.now(),
           _isFactoryDefault: true,
         };
-        try {
-          localStorage.removeItem(CMS_STORAGE_KEY);
-        } catch {
-          // ignore
-        }
         saveLocalCmsData(cleanDefault);
         return cleanDefault;
+      }
+
+      // Subcase C2: Server state is a custom Admin CMS state
+      if (payload && typeof payload === 'object' && 'heroTitlePrefix' in payload) {
+        const sanitized = sanitizeCmsData({
+          ...payload,
+          updatedAt: serverUpdatedAt || Date.now(),
+          _isFactoryDefault: false,
+        });
+        saveLocalCmsData(sanitized);
+        return sanitized;
       }
     } catch {
       // Try next endpoint
     }
   }
-  return null;
+
+  return localUpdatedAt > 0 ? localData : null;
 }
 
 export async function saveSharedCmsData(
   data: EilCmsData,
   action: 'save' | 'reset' = 'save'
 ): Promise<{ persistedRemote: boolean; endpoint?: string }> {
+  const resolvedUpdatedAt =
+    typeof data.updatedAt === 'number' && data.updatedAt > 0 ? data.updatedAt : Date.now();
   const stampedData: EilCmsData = {
     ...data,
-    updatedAt: Date.now(),
+    updatedAt: resolvedUpdatedAt,
     _isFactoryDefault: action === 'reset' || Boolean(data._isFactoryDefault),
   };
   saveLocalCmsData(stampedData);
 
-  const endpoints = ['./cms-api.php', '/cms-api.php', '/api/cms'];
+  const phpEndpoints = ['./cms-api.php', '/cms-api.php'];
+  const apiEndpoints = ['/api/cms'];
   let persistedRemote = false;
   let matchedEndpoint: string | undefined;
 
-  for (const endpoint of endpoints) {
+  // 1. Try cPanel / PHP endpoints using WAF-safe multipart FormData first, then JSON fallback
+  for (const endpoint of phpEndpoints) {
+    try {
+      const formData = new FormData();
+      formData.append('action', action);
+      formData.append('updatedAt', String(stampedData.updatedAt));
+      formData.append('cmsDataJson', JSON.stringify(stampedData));
+
+      const res = await fetch(`${endpoint}?t=${Date.now()}`, {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          Pragma: 'no-cache',
+        },
+        cache: 'no-store',
+        body: formData,
+      });
+
+      if (res.ok) {
+        const text = await res.text();
+        if (!text.trim().startsWith('<?php')) {
+          const parsed = JSON.parse(text);
+          if (parsed?.ok) {
+            persistedRemote = true;
+            if (!matchedEndpoint) matchedEndpoint = endpoint;
+            if (parsed.cmsData && typeof parsed.cmsData === 'object') {
+              saveLocalCmsData(sanitizeCmsData(parsed.cmsData));
+            }
+          }
+        }
+      }
+    } catch {
+      // Fallback to next endpoint
+    }
+  }
+
+  // 2. Also sync to Node / Express /api/cms endpoint
+  for (const endpoint of apiEndpoints) {
     try {
       const res = await fetch(`${endpoint}?t=${Date.now()}`, {
         method: 'POST',
@@ -905,13 +985,20 @@ export async function saveSharedCmsData(
         }),
       });
       if (res.ok) {
-        persistedRemote = true;
-        if (!matchedEndpoint) matchedEndpoint = endpoint;
+        const parsed = await res.json().catch(() => null);
+        if (parsed?.ok) {
+          persistedRemote = true;
+          if (!matchedEndpoint) matchedEndpoint = endpoint;
+          if (parsed.cmsData && typeof parsed.cmsData === 'object') {
+            saveLocalCmsData(sanitizeCmsData(parsed.cmsData));
+          }
+        }
       }
     } catch {
-      // Fallback to next endpoint
+      // Ignore if not running Express
     }
   }
+
   return { persistedRemote, endpoint: matchedEndpoint };
 }
 
@@ -921,11 +1008,6 @@ export async function resetSharedCmsData(): Promise<EilCmsData> {
     updatedAt: Date.now(),
     _isFactoryDefault: true,
   };
-  try {
-    localStorage.removeItem(CMS_STORAGE_KEY);
-  } catch {
-    // ignore
-  }
   saveLocalCmsData(fresh);
   await saveSharedCmsData(fresh, 'reset');
   return fresh;

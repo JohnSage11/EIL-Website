@@ -44,8 +44,10 @@ import {
 import {
   EilCmsData,
   DEFAULT_EIL_CMS_DATA,
+  CMS_STORAGE_KEY,
   ADMIN_SESSION_STORAGE_KEY,
   loadLocalCmsData,
+  saveLocalCmsData,
   fetchSharedCmsData,
   saveSharedCmsData,
   resetSharedCmsData,
@@ -168,18 +170,62 @@ export default function App() {
 
   const logoTapCountRef = useRef<number>(0);
   const logoTapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // On app load, sync CMS state from shared persistent backend (/api/cms or /cms-api.php)
+  // Sync CMS state from shared persistent backend (/cms-api.php or /api/cms) on load, focus & tab visibility
   useEffect(() => {
     let active = true;
-    fetchSharedCmsData().then((remoteData) => {
-      if (active && remoteData) {
-        setCmsData(remoteData);
+
+    const syncFromServer = () => {
+      fetchSharedCmsData().then((remoteData) => {
+        if (active && remoteData) {
+          setCmsData((prev) => {
+            const prevTs = typeof prev.updatedAt === 'number' ? prev.updatedAt : 0;
+            const remoteTs = typeof remoteData.updatedAt === 'number' ? remoteData.updatedAt : 0;
+            if (remoteTs >= prevTs) {
+              return remoteData;
+            }
+            return prev;
+          });
+        }
+      });
+    };
+
+    syncFromServer();
+
+    const handleVisibilityOrFocus = () => {
+      if (document.visibilityState === 'visible') {
+        syncFromServer();
       }
-    });
+    };
+
+    const handleStorageEvent = (e: StorageEvent) => {
+      if (e.key === CMS_STORAGE_KEY && e.newValue) {
+        setCmsData(loadLocalCmsData());
+      }
+    };
+
+    window.addEventListener('focus', handleVisibilityOrFocus);
+    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+    window.addEventListener('storage', handleStorageEvent);
+
     return () => {
       active = false;
+      window.removeEventListener('focus', handleVisibilityOrFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+      window.removeEventListener('storage', handleStorageEvent);
     };
+  }, []);
+
+  const scheduleAutoSaveToServer = useCallback((nextData: EilCmsData) => {
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+    }
+    autoSaveTimerRef.current = setTimeout(() => {
+      void saveSharedCmsData(nextData, 'save').then(() => {
+        setHasUnsavedCmsChanges(false);
+      });
+    }, 300);
   }, []);
 
   const handleBrandLogoClick = () => {
@@ -212,18 +258,41 @@ export default function App() {
     }
   };
 
-  const handleUpdateCmsField = useCallback((fieldKey: EilScalarFieldKey, newValue: string) => {
-    setCmsData((prev) => ({
-      ...prev,
-      [fieldKey]: newValue,
-    }));
-    setHasUnsavedCmsChanges(true);
-  }, []);
+  const handleUpdateCmsField = useCallback(
+    (fieldKey: EilScalarFieldKey, newValue: string) => {
+      setCmsData((prev) => {
+        const next: EilCmsData = {
+          ...prev,
+          [fieldKey]: newValue,
+          updatedAt: Date.now(),
+          _isFactoryDefault: false,
+        };
+        saveLocalCmsData(next);
+        scheduleAutoSaveToServer(next);
+        return next;
+      });
+      setHasUnsavedCmsChanges(true);
+    },
+    [scheduleAutoSaveToServer]
+  );
 
-  const handleUpdateCmsData = useCallback((updater: (prev: EilCmsData) => EilCmsData) => {
-    setCmsData((prev) => updater(prev));
-    setHasUnsavedCmsChanges(true);
-  }, []);
+  const handleUpdateCmsData = useCallback(
+    (updater: (prev: EilCmsData) => EilCmsData) => {
+      setCmsData((prev) => {
+        const updated = updater(prev);
+        const next: EilCmsData = {
+          ...updated,
+          updatedAt: Date.now(),
+          _isFactoryDefault: false,
+        };
+        saveLocalCmsData(next);
+        scheduleAutoSaveToServer(next);
+        return next;
+      });
+      setHasUnsavedCmsChanges(true);
+    },
+    [scheduleAutoSaveToServer]
+  );
 
   const getText = useCallback(
     (key: string, defaultValue: string) => {
@@ -263,9 +332,19 @@ export default function App() {
   );
 
   const handleSaveCmsChanges = async () => {
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
+    }
     setIsSavingCms(true);
     try {
-      await saveSharedCmsData(cmsData);
+      const next: EilCmsData = {
+        ...cmsData,
+        updatedAt: Date.now(),
+        _isFactoryDefault: false,
+      };
+      setCmsData(next);
+      await saveSharedCmsData(next, 'save');
       setHasUnsavedCmsChanges(false);
       showToast('CMS changes saved! All visitors will now see the updated website.');
     } finally {
@@ -274,14 +353,18 @@ export default function App() {
   };
 
   const handleRestoreFactoryDefaults = async () => {
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
+    }
     setIsSavingCms(true);
     try {
-      await resetSharedCmsData();
-      setCmsData(structuredClone(DEFAULT_EIL_CMS_DATA));
+      const restored = await resetSharedCmsData();
+      setCmsData(restored);
       setHasUnsavedCmsChanges(false);
       setEditingCmsField(null);
       setUniversalEditorReq(null);
-      showToast('Entire website restored to original factory default state.');
+      showToast('Entire website restored to original factory default state across all devices.');
     } finally {
       setIsSavingCms(false);
     }
