@@ -25,22 +25,29 @@ jobs:
       - name: Build production bundle
         run: npm run build
 
-      - name: Deploy ./dist/ to Server via FTP
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
-        with:
-          server: ${{ secrets.FTP_SERVER }}
-          username: ${{ secrets.FTP_USERNAME }}
-          password: ${{ secrets.FTP_PASSWORD }}
-          local-dir: ./dist/
-          server-dir: ./
-          exclude: |
-            **/.git*
-            **/.git*/**
-            **/node_modules/**
-            cms-data.json
-            **/cms-data.json
-            cms-store.json
-            **/cms-store.json
-            uploads/**
-            .htaccess
-            **/.htaccess
+      - name: Deploy ./dist/ to Server via FTP (Auto-Reconnect & Resume)
+        env:
+          FTP_SERVER: ${{ secrets.FTP_SERVER }}
+          FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
+          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+        run: |
+          sudo apt-get update && sudo apt-get install -y lftp
+          lftp -c "
+            set ftp:ssl-allow true;
+            set ssl:verify-certificate no;
+            set net:timeout 60;
+            set net:max-retries 10;
+            set net:reconnect-interval-base 5;
+            set ftp:passive-mode true;
+            open -u \"$FTP_USERNAME\",\"$FTP_PASSWORD\" \"$FTP_SERVER\";
+            mirror --reverse --continue --only-newer --parallel=2 \
+              --exclude-glob .git* \
+              --exclude-glob cms-data.json \
+              --exclude-glob cms-store.json \
+              --exclude-glob uploads/ \
+              --exclude-glob uploads/** \
+              --exclude-glob .htaccess \
+              --exclude-glob cgi-bin/ \
+              --exclude-glob .well-known/ \
+              ./dist/ ./
+          "
