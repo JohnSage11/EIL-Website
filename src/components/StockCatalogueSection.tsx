@@ -12,7 +12,7 @@ import {
   Trash2,
   PlusCircle,
 } from 'lucide-react';
-import { StockItem, GasDetail } from '../data/eilData';
+import { StockItem, GasDetail, INDUSTRIAL_GASES_DETAIL } from '../data/eilData';
 import { CmsText, CmsImage, useCms } from './StealthCmsAdmin';
 
 interface StockCatalogueSectionProps {
@@ -335,16 +335,44 @@ export const StockCatalogueSection: React.FC<StockCatalogueSectionProps> = ({
                       : 'border-[#0A0A0A]/15 hover:border-[#DC2626] bg-[#0A0A0A]'
                   }`}
                 >
-                  <div className="absolute inset-0">
+                  <div className={`absolute inset-0 ${isEditMode ? 'z-30' : ''}`}>
                     <CmsImage
                       cmsKey={`stock_cat_card_img_${catSlug}`}
+                      src={
+                        cmsData.customImages?.[`stock_cat_card_img_${catSlug}`] ||
+                        cmsData.customImages?.[`stock_spotlight_img_${cat}`] ||
+                        cmsData.customImages?.[`ai_default_${meta.image}`]
+                      }
                       defaultSrc={meta.image}
                       alt={cat}
                       label={`${cat} Category Card Image`}
                       section="Product & Supply"
-                      targetWidth={600}
-                      targetHeight={450}
-                      aspectLabel="4:3 Category Thumbnail"
+                      targetWidth={800}
+                      targetHeight={500}
+                      aspectLabel="16:10 Category Card"
+                      onSave={(newSrc) => {
+                        const isReset = !newSrc || newSrc === meta.image;
+                        updateCmsData((prev) => {
+                          const nextCustomImages = { ...prev.customImages };
+                          if (isReset) {
+                            delete nextCustomImages[`stock_cat_card_img_${catSlug}`];
+                            delete nextCustomImages[`stock_spotlight_img_${cat}`];
+                            if (meta.image.includes('/gen_')) {
+                              delete nextCustomImages[`ai_default_${meta.image}`];
+                            }
+                          } else {
+                            nextCustomImages[`stock_cat_card_img_${catSlug}`] = newSrc;
+                            nextCustomImages[`stock_spotlight_img_${cat}`] = newSrc;
+                            if (meta.image.includes('/gen_')) {
+                              nextCustomImages[`ai_default_${meta.image}`] = newSrc;
+                            }
+                          }
+                          return {
+                            ...prev,
+                            customImages: nextCustomImages,
+                          };
+                        });
+                      }}
                       className="w-full h-full object-cover opacity-55 group-hover:opacity-75 group-hover:scale-110 transition-all duration-500"
                     />
                     <div
@@ -365,8 +393,8 @@ export const StockCatalogueSection: React.FC<StockCatalogueSectionProps> = ({
                       </span>
                     )}
                   </div>
-                  <div className="relative z-10">
-                    <div className="text-xs font-extrabold text-[#FFFFFF] leading-tight group-hover:text-[#FFFFFF]">
+                  <div className="relative z-10 pointer-events-none">
+                    <div className="text-xs font-extrabold text-[#FFFFFF] leading-tight group-hover:text-[#FFFFFF] pointer-events-auto inline-block">
                       <CmsText
                         cmsKey={`stock_cat_card_title_${catSlug}`}
                         defaultValue={cat}
@@ -374,7 +402,7 @@ export const StockCatalogueSection: React.FC<StockCatalogueSectionProps> = ({
                         section="Product & Supply"
                       />
                     </div>
-                    <div className="text-[10px] font-mono text-red-200 mt-0.5">
+                    <div data-cms-ignore="true" className="text-[10px] font-mono text-red-200 mt-0.5 pointer-events-none">
                       {stockList.filter((i) => i.category === cat).length} groups →
                     </div>
                   </div>
@@ -443,12 +471,29 @@ export const StockCatalogueSection: React.FC<StockCatalogueSectionProps> = ({
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mt-6">
-              {gasList.map((gas, gIdx) => (
+              {gasList.map((gas, gIdx) => {
+                const defaultGasImg =
+                  INDUSTRIAL_GASES_DETAIL[gIdx]?.image || gas.image || '/assets/eil/pdf_img_028.jpg';
+                return (
                 <div
                   key={`${gas.name}-${gIdx}`}
-                  className="bg-[#141414] hover:bg-[#1F1F1F] rounded-2xl p-5 border border-white/15 hover:border-[#DC2626] transition-all duration-200 flex flex-col justify-between group relative"
+                  className="bg-[#141414] hover:bg-[#1F1F1F] rounded-2xl p-4 border border-white/15 hover:border-[#DC2626] transition-all duration-200 flex flex-col justify-between group relative overflow-hidden"
                 >
                   <div>
+                    <div className="aspect-[16/10] rounded-xl overflow-hidden mb-3 border border-white/10 bg-[#0A0A0A] relative">
+                      <CmsImage
+                        src={gas.image || defaultGasImg}
+                        defaultSrc={defaultGasImg}
+                        alt={gas.name}
+                        label={`Fleet Spec ${gIdx + 1}: ${gas.name} Image`}
+                        section="Fleet Technical Reference"
+                        targetWidth={800}
+                        targetHeight={500}
+                        aspectLabel="16:10 Fleet Spec Card"
+                        onSave={(newSrc) => handleUpdateGasItem(gIdx, { image: newSrc })}
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                      />
+                    </div>
                     <div className="flex items-center justify-between gap-2 mb-2">
                       <span className="text-[11px] font-mono text-red-300">
                         <CmsText
@@ -556,7 +601,8 @@ export const StockCatalogueSection: React.FC<StockCatalogueSectionProps> = ({
                     <ArrowRight className="w-3.5 h-3.5" />
                   </button>
                 </div>
-              ))}
+                );
+              })}
             </div>
           </motion.div>
         )}
@@ -712,6 +758,13 @@ export const StockCatalogueSection: React.FC<StockCatalogueSectionProps> = ({
             <div className="lg:col-span-4 aspect-[16/10] sm:h-52 lg:h-auto relative overflow-hidden">
               <CmsImage
                 cmsKey={`stock_spotlight_img_${selectedCategory}`}
+                src={
+                  cmsData.customImages?.[`stock_spotlight_img_${selectedCategory}`] ||
+                  cmsData.customImages?.[
+                    `stock_cat_card_img_${selectedCategory.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`
+                  ] ||
+                  cmsData.customImages?.[`ai_default_${activeCategoryMeta.image}`]
+                }
                 defaultSrc={activeCategoryMeta.image}
                 alt={selectedCategory}
                 label={`${selectedCategory} Spotlight Image`}
@@ -719,6 +772,30 @@ export const StockCatalogueSection: React.FC<StockCatalogueSectionProps> = ({
                 targetWidth={800}
                 targetHeight={500}
                 aspectLabel="16:10 Spotlight Banner"
+                onSave={(newSrc) => {
+                  const catSlug = selectedCategory.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+                  const isReset = !newSrc || newSrc === activeCategoryMeta.image;
+                  updateCmsData((prev) => {
+                    const nextCustomImages = { ...prev.customImages };
+                    if (isReset) {
+                      delete nextCustomImages[`stock_spotlight_img_${selectedCategory}`];
+                      delete nextCustomImages[`stock_cat_card_img_${catSlug}`];
+                      if (activeCategoryMeta.image.includes('/gen_')) {
+                        delete nextCustomImages[`ai_default_${activeCategoryMeta.image}`];
+                      }
+                    } else {
+                      nextCustomImages[`stock_spotlight_img_${selectedCategory}`] = newSrc;
+                      nextCustomImages[`stock_cat_card_img_${catSlug}`] = newSrc;
+                      if (activeCategoryMeta.image.includes('/gen_')) {
+                        nextCustomImages[`ai_default_${activeCategoryMeta.image}`] = newSrc;
+                      }
+                    }
+                    return {
+                      ...prev,
+                      customImages: nextCustomImages,
+                    };
+                  });
+                }}
                 className="w-full h-full object-cover hover:scale-105 transition-transform duration-500"
               />
             </div>

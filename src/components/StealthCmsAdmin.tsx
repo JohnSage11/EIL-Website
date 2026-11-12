@@ -22,8 +22,20 @@ import {
 import {
   EilCmsData,
   DEFAULT_EIL_CMS_DATA,
+  DEFAULT_DELIVERY_OPTIONS,
+  DEFAULT_FLEET_MACHINES,
+  DEFAULT_FABRICATION_PORTFOLIO,
+  DEFAULT_CYLINDER_SERVICE_MODES,
+  CmsDeliveryOptionSpec,
+  CmsFleetMachineSpec,
+  CmsFabricationPortfolioItem,
   ADMIN_SESSION_STORAGE_KEY,
 } from '../data/cmsDefaults';
+import {
+  SERVICES_LIST,
+  ServiceDetail,
+  INDUSTRIAL_GASES_DETAIL,
+} from '../data/eilData';
 import { ResilientImage } from './ResilientImage';
 
 export type EilScalarFieldKey = Exclude<
@@ -333,8 +345,8 @@ export interface AutoDimensionResult {
 
 export async function autoDimensionImageFile(
   file: File,
-  targetWidth = 1200,
-  targetHeight = 900,
+  targetWidth = 960,
+  targetHeight = 600,
   fitMode: 'cover' | 'contain' = 'cover'
 ): Promise<AutoDimensionResult> {
   return new Promise((resolve, reject) => {
@@ -346,9 +358,18 @@ export async function autoDimensionImageFile(
       const originalWidth = img.naturalWidth || img.width || targetWidth;
       const originalHeight = img.naturalHeight || img.height || targetHeight;
 
+      // Cap cover card dimensions to 960x640 max so base64 JPEGs stay ~35-60KB and never hit localStorage or POST limits
+      const ratio = targetWidth / Math.max(1, targetHeight);
+      const effectiveWidth =
+        fitMode === 'contain' ? targetWidth : Math.min(targetWidth, 960);
+      const effectiveHeight =
+        fitMode === 'contain'
+          ? targetHeight
+          : Math.round(effectiveWidth / Math.max(0.25, ratio));
+
       const canvas = document.createElement('canvas');
-      canvas.width = targetWidth;
-      canvas.height = targetHeight;
+      canvas.width = effectiveWidth;
+      canvas.height = effectiveHeight;
 
       const ctx = canvas.getContext('2d');
       if (!ctx) {
@@ -361,31 +382,28 @@ export async function autoDimensionImageFile(
 
       const scale =
         fitMode === 'contain'
-          ? Math.min(targetWidth / originalWidth, targetHeight / originalHeight)
-          : Math.max(targetWidth / originalWidth, targetHeight / originalHeight);
+          ? Math.min(effectiveWidth / originalWidth, effectiveHeight / originalHeight)
+          : Math.max(effectiveWidth / originalWidth, effectiveHeight / originalHeight);
 
       const drawWidth = Math.round(originalWidth * scale);
       const drawHeight = Math.round(originalHeight * scale);
-      const offsetX = Math.round((targetWidth - drawWidth) / 2);
-      const offsetY = Math.round((targetHeight - drawHeight) / 2);
+      const offsetX = Math.round((effectiveWidth - drawWidth) / 2);
+      const offsetY = Math.round((effectiveHeight - drawHeight) / 2);
 
-      const isPngOrWebp =
-        fitMode === 'contain' ||
-        file.type === 'image/png' ||
-        file.type === 'image/webp' ||
-        file.type === 'image/svg+xml';
-
-      if (fitMode === 'cover' && !isPngOrWebp) {
-        ctx.fillStyle = '#0A0A0A';
-        ctx.fillRect(0, 0, targetWidth, targetHeight);
+      // Only use PNG transparency for 'contain' mode (e.g. Brand Logo).
+      // All 'cover' card images MUST be compressed as JPEG so uploaded PNG screenshots
+      // don't become 2.5MB uncompressed PNGs that exceed localStorage quota!
+      if (fitMode === 'contain') {
+        ctx.clearRect(0, 0, effectiveWidth, effectiveHeight);
       } else {
-        ctx.clearRect(0, 0, targetWidth, targetHeight);
+        ctx.fillStyle = '#0A0A0A';
+        ctx.fillRect(0, 0, effectiveWidth, effectiveHeight);
       }
 
       ctx.drawImage(img, offsetX, offsetY, drawWidth, drawHeight);
 
-      const outputMime = fitMode === 'contain' || file.type === 'image/png' ? 'image/png' : 'image/jpeg';
-      const quality = outputMime === 'image/jpeg' ? 0.85 : undefined;
+      const outputMime = fitMode === 'contain' ? 'image/png' : 'image/jpeg';
+      const quality = outputMime === 'image/jpeg' ? 0.78 : undefined;
       const dataUrl = canvas.toDataURL(outputMime, quality);
 
       canvas.toBlob(
@@ -393,7 +411,7 @@ export async function autoDimensionImageFile(
           const ext = outputMime === 'image/png' ? 'png' : 'jpg';
           const baseName = file.name.replace(/\.[^/.]+$/, '') || 'eil_cms_image';
           const resizedFile = blob
-            ? new File([blob], `${baseName}_${targetWidth}x${targetHeight}.${ext}`, {
+            ? new File([blob], `${baseName}_${effectiveWidth}x${effectiveHeight}.${ext}`, {
                 type: outputMime,
               })
             : file;
@@ -403,8 +421,8 @@ export async function autoDimensionImageFile(
             dataUrl,
             originalWidth,
             originalHeight,
-            targetWidth,
-            targetHeight,
+            targetWidth: effectiveWidth,
+            targetHeight: effectiveHeight,
           });
         },
         outputMime,
@@ -490,15 +508,26 @@ export const CmsEditableImage: React.FC<CmsEditableImageProps> = ({
   className = 'w-full h-full object-cover',
   eager = false,
 }) => {
+  const { cmsData } = useCms();
   const descriptor = CMS_FIELD_DESCRIPTORS.find((d) => d.key === fieldKey);
   const targetW = descriptor?.targetWidth || 1200;
   const targetH = descriptor?.targetHeight || 900;
   const aspectLabel = descriptor?.aspectLabel || 'Auto-Fit';
+  const defaultFieldSrc = (DEFAULT_EIL_CMS_DATA[fieldKey] as string) || '';
+  const aiOverride = defaultFieldSrc
+    ? cmsData.customImages?.[`ai_default_${defaultFieldSrc}`]
+    : undefined;
+  const resolvedSrc =
+    src && src !== defaultFieldSrc
+      ? src
+      : aiOverride && aiOverride.length > 0
+      ? aiOverride
+      : src || defaultFieldSrc;
 
   return (
     <div data-cms-explicit="true" className="relative w-full h-full overflow-hidden">
       <ResilientImage
-        src={src}
+        src={resolvedSrc}
         alt={alt}
         className={`${className} object-cover w-full h-full`}
         eager={eager}
@@ -512,7 +541,7 @@ export const CmsEditableImage: React.FC<CmsEditableImageProps> = ({
             e.stopPropagation();
             onSelectField(fieldKey);
           }}
-          className="absolute inset-0 z-30 bg-[#0A0A0A]/55 hover:bg-[#0A0A0A]/75 border-4 border-dashed border-[#10B981] flex flex-col items-center justify-start pt-2.5 sm:pt-3.5 px-2 pb-2 gap-1 text-white transition-all cursor-pointer text-center"
+          className="absolute inset-0 z-40 bg-[#0A0A0A]/55 hover:bg-[#0A0A0A]/75 border-4 border-dashed border-[#10B981] flex flex-col items-center justify-start pt-2.5 sm:pt-3.5 px-2 pb-2 gap-1 text-white transition-all cursor-pointer text-center"
         >
           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#10B981] text-[#0A0A0A] text-[10px] sm:text-xs font-extrabold uppercase tracking-wider shadow-lg">
             <Upload className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
@@ -641,9 +670,29 @@ export const CmsImage: React.FC<CmsImageProps> = ({
   className = 'w-full h-full object-cover',
   eager = false,
 }) => {
-  const { isEditMode, getImage, updateCmsData, openUniversalEditor } = useCms();
+  const { cmsData, isEditMode, getImage, updateCmsData, openUniversalEditor } = useCms();
+
+  const customFromKey = cmsKey ? cmsData.customImages?.[cmsKey] : undefined;
+  const explicitCardSrc =
+    typeof src === 'string' && src.trim().length > 0 && src !== defaultSrc
+      ? src
+      : typeof customFromKey === 'string' &&
+        customFromKey.trim().length > 0 &&
+        customFromKey !== defaultSrc
+      ? customFromKey
+      : undefined;
+
+  const aiDefaultOverride = defaultSrc
+    ? cmsData.customImages?.[`ai_default_${defaultSrc}`]
+    : undefined;
+
   const resolvedSrc =
-    src !== undefined ? src : cmsKey ? getImage(cmsKey, defaultSrc) : defaultSrc;
+    explicitCardSrc ||
+    (typeof aiDefaultOverride === 'string' && aiDefaultOverride.trim().length > 0
+      ? aiDefaultOverride
+      : undefined) ||
+    (typeof src === 'string' && src.trim().length > 0 ? src : undefined) ||
+    (cmsKey ? getImage(cmsKey, defaultSrc) : defaultSrc);
 
   return (
     <div data-cms-explicit="true" className="relative w-full h-full overflow-hidden">
@@ -673,19 +722,32 @@ export const CmsImage: React.FC<CmsImageProps> = ({
               onSave: (newVal) => {
                 if (onSave) {
                   onSave(newVal);
-                } else if (cmsKey) {
-                  updateCmsData((prev) => ({
-                    ...prev,
-                    customImages: {
-                      ...prev.customImages,
-                      [cmsKey]: newVal,
-                    },
-                  }));
                 }
+                updateCmsData((prev) => {
+                  const nextCustomImages = { ...(prev.customImages || {}) };
+                  if (cmsKey) {
+                    if (newVal === defaultSrc) {
+                      delete nextCustomImages[cmsKey];
+                    } else {
+                      nextCustomImages[cmsKey] = newVal;
+                    }
+                  }
+                  if (defaultSrc && defaultSrc.includes('/gen_')) {
+                    if (newVal === defaultSrc) {
+                      delete nextCustomImages[`ai_default_${defaultSrc}`];
+                    } else {
+                      nextCustomImages[`ai_default_${defaultSrc}`] = newVal;
+                    }
+                  }
+                  return {
+                    ...prev,
+                    customImages: nextCustomImages,
+                  };
+                });
               },
             });
           }}
-          className="absolute inset-0 z-30 bg-[#0A0A0A]/55 hover:bg-[#0A0A0A]/75 border-4 border-dashed border-[#10B981] flex flex-col items-center justify-start pt-2.5 sm:pt-3.5 px-2 pb-2 gap-1 text-white transition-all cursor-pointer text-center"
+          className="absolute inset-0 z-40 bg-[#0A0A0A]/55 hover:bg-[#0A0A0A]/75 border-4 border-dashed border-[#10B981] flex flex-col items-center justify-start pt-2.5 sm:pt-3.5 px-2 pb-2 gap-1 text-white transition-all cursor-pointer text-center"
         >
           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#10B981] text-[#0A0A0A] text-[10px] sm:text-xs font-extrabold uppercase tracking-wider shadow-lg">
             <Upload className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
@@ -1178,6 +1240,8 @@ export const CmsFieldEditorModal: React.FC<CmsFieldEditorModalProps> = ({
   const [uploadingImage, setUploadingImage] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<string | null>(null);
 
+  // IMPORTANT: Only initialize draftValue when fieldKey or universalRequest opens/changes.
+  // Never include cmsData in dependencies or background syncs on window.focus will reset the uploaded image!
   useEffect(() => {
     if (universalRequest) {
       setDraftValue(universalRequest.currentValue || '');
@@ -1186,7 +1250,8 @@ export const CmsFieldEditorModal: React.FC<CmsFieldEditorModalProps> = ({
       setDraftValue((cmsData[fieldKey] as string) || '');
       setUploadStatus(null);
     }
-  }, [fieldKey, universalRequest, cmsData]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fieldKey, universalRequest]);
 
   const activeConfig = universalRequest
     ? {
@@ -1194,21 +1259,21 @@ export const CmsFieldEditorModal: React.FC<CmsFieldEditorModalProps> = ({
         label: universalRequest.label,
         section: universalRequest.section || 'Site Content Editor',
         defaultValue: universalRequest.defaultValue,
-        targetWidth: universalRequest.targetWidth || 1200,
-        targetHeight: universalRequest.targetHeight || 900,
-        aspectLabel: universalRequest.aspectLabel || '4:3 Landscape',
+        targetWidth: universalRequest.targetWidth || 960,
+        targetHeight: universalRequest.targetHeight || 600,
+        aspectLabel: universalRequest.aspectLabel || '16:10 Landscape',
         fitMode: universalRequest.fitMode || 'cover',
       }
-    : descriptor && fieldKey
+    : fieldKey
     ? {
-        type: descriptor.type,
-        label: descriptor.label,
-        section: descriptor.section,
-        defaultValue: DEFAULT_EIL_CMS_DATA[fieldKey] as string,
-        targetWidth: descriptor.targetWidth || 1200,
-        targetHeight: descriptor.targetHeight || 900,
-        aspectLabel: descriptor.aspectLabel || '4:3 Landscape',
-        fitMode: descriptor.fitMode || 'cover',
+        type: descriptor?.type || (fieldKey.toLowerCase().includes('image') || fieldKey.toLowerCase().includes('logo') ? 'image' : 'text'),
+        label: descriptor?.label || String(fieldKey),
+        section: descriptor?.section || 'Content Field',
+        defaultValue: (DEFAULT_EIL_CMS_DATA[fieldKey] as string) || '',
+        targetWidth: descriptor?.targetWidth || 960,
+        targetHeight: descriptor?.targetHeight || 600,
+        aspectLabel: descriptor?.aspectLabel || 'Auto-Fit',
+        fitMode: descriptor?.fitMode || 'cover',
       }
     : null;
 
@@ -1224,6 +1289,14 @@ export const CmsFieldEditorModal: React.FC<CmsFieldEditorModalProps> = ({
     aspectLabel,
     fitMode,
   } = activeConfig;
+
+  const applyImmediateValue = (newVal: string) => {
+    if (universalRequest) {
+      universalRequest.onSave(newVal);
+    } else if (fieldKey) {
+      onUpdateField(fieldKey, newVal);
+    }
+  };
 
   const handleImageFileUpload = async (file: File | null) => {
     if (!file) return;
@@ -1241,8 +1314,9 @@ export const CmsFieldEditorModal: React.FC<CmsFieldEditorModalProps> = ({
       );
 
       setDraftValue(dimResult.dataUrl);
+      applyImmediateValue(dimResult.dataUrl);
       setUploadStatus(
-        `Auto-dimensioned (${dimResult.originalWidth}×${dimResult.originalHeight} px → ${dimResult.targetWidth}×${dimResult.targetHeight} px) and ready! Click "Apply Field Update" below.`
+        `✓ Uploaded & applied (${dimResult.originalWidth}×${dimResult.originalHeight} px → ${dimResult.targetWidth}×${dimResult.targetHeight} px)! Click "Apply Field Update" below to finish.`
       );
       setUploadingImage(false);
     } catch {
@@ -1250,7 +1324,8 @@ export const CmsFieldEditorModal: React.FC<CmsFieldEditorModalProps> = ({
       reader.onload = () => {
         if (typeof reader.result === 'string') {
           setDraftValue(reader.result);
-          setUploadStatus('Image loaded from device! Click "Apply Field Update" below.');
+          applyImmediateValue(reader.result);
+          setUploadStatus('✓ Image uploaded & applied! Click "Apply Field Update" below to finish.');
         }
         setUploadingImage(false);
       };
@@ -1264,11 +1339,7 @@ export const CmsFieldEditorModal: React.FC<CmsFieldEditorModalProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (universalRequest) {
-      universalRequest.onSave(draftValue);
-    } else if (fieldKey) {
-      onUpdateField(fieldKey, draftValue);
-    }
+    applyImmediateValue(draftValue);
     onClose();
   };
 
@@ -1319,7 +1390,7 @@ export const CmsFieldEditorModal: React.FC<CmsFieldEditorModalProps> = ({
                   </span>
                 </div>
                 <p className="text-[11px] text-[#065F46] leading-relaxed">
-                  Upload any image size from your device — the system automatically scales it evenly (up or down) to fit the exact <strong>{targetWidth} × {targetHeight} px</strong> slot requirement without breaking the page layout.
+                  Upload any image size from your device — the system automatically scales and optimizes it to fit the <strong>{targetWidth} × {targetHeight} px</strong> card slot and saves across all devices.
                 </p>
               </div>
 
@@ -1348,7 +1419,7 @@ export const CmsFieldEditorModal: React.FC<CmsFieldEditorModalProps> = ({
                         : 'Upload New Image File from Your Device'}
                     </span>
                     <span className="text-[11px] text-[#71717A] block">
-                      PNG, JPG, WEBP · Automatically scaled to {targetWidth} × {targetHeight} px
+                      PNG, JPG, WEBP · Automatically scaled &amp; applied immediately
                     </span>
                   </div>
                 </div>
@@ -1358,9 +1429,11 @@ export const CmsFieldEditorModal: React.FC<CmsFieldEditorModalProps> = ({
                 <input
                   type="file"
                   accept="image/*"
-                  onChange={(e) =>
-                    handleImageFileUpload(e.target.files?.[0] ? e.target.files[0] : null)
-                  }
+                  onChange={(e) => {
+                    const selected = e.target.files?.[0] ? e.target.files[0] : null;
+                    void handleImageFileUpload(selected);
+                    e.target.value = '';
+                  }}
                   className="hidden"
                 />
               </label>
@@ -1420,6 +1493,7 @@ export const CmsFieldEditorModal: React.FC<CmsFieldEditorModalProps> = ({
               type="button"
               onClick={() => {
                 setDraftValue(defaultValue);
+                applyImmediateValue(defaultValue);
                 setUploadStatus('Reverted this field to factory default.');
               }}
               className="text-xs font-bold text-[#DC2626] hover:underline cursor-pointer"
@@ -1458,25 +1532,108 @@ interface CmsAllFieldsDrawerProps {
   onClose: () => void;
   cmsData: EilCmsData;
   onUpdateField: (key: EilScalarFieldKey, newValue: string) => void;
+  updateCmsData?: (updater: (prev: EilCmsData) => EilCmsData) => void;
   onSaveChanges: () => void;
   onRequestRestoreDefaults: () => void;
   isSaving: boolean;
 }
+
+const AI_GENERATED_MASTER_CARDS = [
+  {
+    key: 'gen_bulldozer',
+    defaultImg: '/assets/eil/gen_bulldozer.jpg',
+    title: 'Dozers & Earthmoving (CAT D6 / D7G / D8R Bulldozer)',
+    usedIn: 'Category Card, Fleet Lease Card, Service 03 Secondary Image & Fleet Specs Guide',
+    catSlug: 'dozers_earthmoving',
+    catName: 'Dozers & Earthmoving',
+    fleetId: 'fleet-dozer-d7-d8',
+    serviceSecondaryId: 'earthmoving-swamp-operations',
+    gasIndex: 2,
+  },
+  {
+    key: 'gen_backhoe_loader',
+    defaultImg: '/assets/eil/gen_backhoe_loader.jpg',
+    title: 'Backhoes & Loaders (CAT 428F2 / JCB 3CX Backhoe)',
+    usedIn: 'Category Card, Fleet Lease Card & Fleet Specs Guide',
+    catSlug: 'backhoes_loaders',
+    catName: 'Backhoes & Loaders',
+    fleetId: 'fleet-backhoe-428',
+    gasIndex: 4,
+  },
+  {
+    key: 'gen_lowbed_trailer',
+    defaultImg: '/assets/eil/gen_lowbed_trailer.jpg',
+    title: 'Multi-Axle Lowbed Trailers (40T – 100T+ Heavy Haulage)',
+    usedIn: 'Category Card, Haulage Mode 01, Fleet Lease Card, Service 02, Portfolio Card 1 & Banners',
+    catSlug: 'lowbed_flatbed_haulage',
+    catName: 'Lowbed & Flatbed Haulage',
+    deliveryId: 'lowbed-haulage',
+    fleetId: 'fleet-lowbed-60t-100t',
+    servicePrimaryId: 'heavy-haulage-logistics',
+    portfolioId: 'fab-1',
+    bannerKeys: ['ps_banner_img_2', 'piping_img_1'],
+    gasIndex: 5,
+  },
+  {
+    key: 'gen_flatbed_trailer',
+    defaultImg: '/assets/eil/gen_flatbed_trailer.jpg',
+    title: '40ft & 45ft Flatbed Trailers (Containers & Pipes)',
+    usedIn: 'Haulage Mode 02, Fleet Lease Card, Portfolio Card 2 & Fleet Specs Guide',
+    deliveryId: 'flatbed-haulage',
+    fleetId: 'fleet-flatbed-40ft',
+    portfolioId: 'fab-2',
+    gasIndex: 6,
+  },
+  {
+    key: 'gen_pneumatic_truck',
+    defaultImg: '/assets/eil/gen_pneumatic_truck.jpg',
+    title: 'Pneumatic Dry-Bulk Cement & Barite Silo Trucks',
+    usedIn: 'Fleet Lease Card, Portfolio Card 4 & Fleet Specs Guide',
+    fleetId: 'fleet-pneumatic-silo',
+    portfolioId: 'fab-4',
+    gasIndex: 7,
+  },
+  {
+    key: 'gen_dump_truck',
+    defaultImg: '/assets/eil/gen_dump_truck.jpg',
+    title: 'Heavy-Duty Dump Trucks / Tippers (20T – 45T)',
+    usedIn: 'Category Card, Haulage Mode 04, Fleet Lease Card, Portfolio Card 5 & Fleet Specs Guide',
+    catSlug: 'dump_trucks_support_plant',
+    catName: 'Dump Trucks & Support Plant',
+    deliveryId: 'dump-truck-haulage',
+    fleetId: 'fleet-dump-truck-30t',
+    portfolioId: 'fab-5',
+    gasIndex: 8,
+  },
+];
 
 export const CmsAllFieldsDrawer: React.FC<CmsAllFieldsDrawerProps> = ({
   isOpen,
   onClose,
   cmsData,
   onUpdateField,
+  updateCmsData,
   onSaveChanges,
   onRequestRestoreDefaults,
   isSaving,
 }) => {
-  const sections = Array.from(new Set(CMS_FIELD_DESCRIPTORS.map((d) => d.section)));
-  const [activeSection, setActiveSection] = useState<string>(sections[0]);
-  const [uploadingKey, setUploadingKey] = useState<EilScalarFieldKey | null>(null);
+  const baseSections = Array.from(new Set(CMS_FIELD_DESCRIPTORS.map((d) => d.section)));
+  const dynamicSections = [
+    'AI-Generated Image Cards (All 6 Types)',
+    'Product & Supply Categories (8 Cards)',
+    'Haulage & Trailer Fleet Modes',
+    'Heavy Equipment Lease Fleet',
+    'Core Contracting Services',
+    'Mobilization Portfolio Cards',
+    'Fleet Technical Specs Guide (9 Cards)',
+    'Site Survey & Support Modes (4 Cards)',
+    'Page Header Banners (10 Cards)',
+  ];
+  const allSections = [...dynamicSections, ...baseSections];
+  const [activeSection, setActiveSection] = useState<string>(allSections[0]);
+  const [uploadingKey, setUploadingKey] = useState<string | null>(null);
   const [drawerUploadNotes, setDrawerUploadNotes] = useState<
-    Partial<Record<EilScalarFieldKey, string>>
+    Record<string, string>
   >({});
 
   if (!isOpen) return null;
@@ -1484,18 +1641,19 @@ export const CmsAllFieldsDrawer: React.FC<CmsAllFieldsDrawerProps> = ({
   const sectionFields = CMS_FIELD_DESCRIPTORS.filter((d) => d.section === activeSection);
 
   const handleDrawerDeviceUpload = async (
-    field: CmsFieldDescriptor,
-    file: File | null
+    fieldKey: string,
+    targetW = 960,
+    targetH = 600,
+    fitMode: 'cover' | 'contain' = 'cover',
+    file: File | null,
+    applyFn?: (dataUrl: string) => void
   ) => {
     if (!file) return;
-    const targetW = field.targetWidth || 1200;
-    const targetH = field.targetHeight || 900;
-    const fitMode = field.fitMode || 'cover';
 
-    setUploadingKey(field.key);
+    setUploadingKey(fieldKey);
     setDrawerUploadNotes((prev) => ({
       ...prev,
-      [field.key]: `Auto-dimensioning to ${targetW} × ${targetH} px...`,
+      [fieldKey]: `Auto-dimensioning to ${targetW} × ${targetH} px...`,
     }));
 
     try {
@@ -1506,20 +1664,28 @@ export const CmsAllFieldsDrawer: React.FC<CmsAllFieldsDrawerProps> = ({
         fitMode
       );
 
-      onUpdateField(field.key, dimResult.dataUrl);
+      if (applyFn) {
+        applyFn(dimResult.dataUrl);
+      } else {
+        onUpdateField(fieldKey as EilScalarFieldKey, dimResult.dataUrl);
+      }
 
       setDrawerUploadNotes((prev) => ({
         ...prev,
-        [field.key]: `Auto-dimensioned (${dimResult.originalWidth}×${dimResult.originalHeight} px → ${dimResult.targetWidth}×${dimResult.targetHeight} px)`,
+        [fieldKey]: `✓ Uploaded & synced (${dimResult.originalWidth}×${dimResult.originalHeight} px → ${dimResult.targetWidth}×${dimResult.targetHeight} px)`,
       }));
     } catch {
       const reader = new FileReader();
       reader.onload = () => {
         if (typeof reader.result === 'string') {
-          onUpdateField(field.key, reader.result);
+          if (applyFn) {
+            applyFn(reader.result);
+          } else {
+            onUpdateField(fieldKey as EilScalarFieldKey, reader.result);
+          }
           setDrawerUploadNotes((prev) => ({
             ...prev,
-            [field.key]: 'Image loaded from device.',
+            [fieldKey]: '✓ Image loaded and applied from device.',
           }));
         }
       };
@@ -1527,6 +1693,86 @@ export const CmsAllFieldsDrawer: React.FC<CmsAllFieldsDrawerProps> = ({
     } finally {
       setUploadingKey(null);
     }
+  };
+
+  const applyAiMasterCardImage = (
+    card: (typeof AI_GENERATED_MASTER_CARDS)[number],
+    newImg: string,
+    isReset = false
+  ) => {
+    if (!updateCmsData) return;
+    updateCmsData((prev) => {
+      const nextCustomImages = { ...(prev.customImages || {}) };
+      if (isReset) {
+        delete nextCustomImages[`ai_default_${card.defaultImg}`];
+        if (card.catSlug && card.catName) {
+          delete nextCustomImages[`stock_cat_card_img_${card.catSlug}`];
+          delete nextCustomImages[`stock_spotlight_img_${card.catName}`];
+        }
+        if (card.bannerKeys) {
+          for (const bk of card.bannerKeys) {
+            delete nextCustomImages[bk];
+          }
+        }
+      } else {
+        nextCustomImages[`ai_default_${card.defaultImg}`] = newImg;
+        if (card.catSlug && card.catName) {
+          nextCustomImages[`stock_cat_card_img_${card.catSlug}`] = newImg;
+          nextCustomImages[`stock_spotlight_img_${card.catName}`] = newImg;
+        }
+        if (card.bannerKeys) {
+          for (const bk of card.bannerKeys) {
+            nextCustomImages[bk] = newImg;
+          }
+        }
+      }
+
+      const nextDeliveryOptions = (
+        prev.deliveryOptions?.length ? prev.deliveryOptions : DEFAULT_DELIVERY_OPTIONS
+      ).map((opt) =>
+        card.deliveryId && opt.id === card.deliveryId ? { ...opt, image: newImg } : opt
+      );
+
+      const nextFleetMachines = (
+        prev.fleetMachines?.length ? prev.fleetMachines : DEFAULT_FLEET_MACHINES
+      ).map((m) => (card.fleetId && m.id === card.fleetId ? { ...m, image: newImg } : m));
+
+      const nextServicesList = (
+        prev.servicesList?.length ? prev.servicesList : SERVICES_LIST
+      ).map((srv) => {
+        if (card.servicePrimaryId && srv.id === card.servicePrimaryId) {
+          return { ...srv, image: newImg };
+        }
+        if (card.serviceSecondaryId && srv.id === card.serviceSecondaryId) {
+          return { ...srv, secondaryImage: newImg };
+        }
+        return srv;
+      });
+
+      const nextPortfolio = (
+        prev.fabricationPortfolio?.length
+          ? prev.fabricationPortfolio
+          : DEFAULT_FABRICATION_PORTFOLIO
+      ).map((fab) =>
+        card.portfolioId && fab.id === card.portfolioId ? { ...fab, image: newImg } : fab
+      );
+
+      const nextGases = (
+        prev.industrialGases?.length ? prev.industrialGases : INDUSTRIAL_GASES_DETAIL
+      ).map((gas, idx) =>
+        card.gasIndex === idx ? { ...gas, image: newImg } : gas
+      );
+
+      return {
+        ...prev,
+        customImages: nextCustomImages,
+        deliveryOptions: nextDeliveryOptions,
+        fleetMachines: nextFleetMachines,
+        servicesList: nextServicesList,
+        fabricationPortfolio: nextPortfolio,
+        industrialGases: nextGases,
+      };
+    });
   };
 
   return (
@@ -1542,7 +1788,7 @@ export const CmsAllFieldsDrawer: React.FC<CmsAllFieldsDrawerProps> = ({
               EIL CENTRALIZED CMS STORE
             </span>
             <h3 className="text-base sm:text-lg font-extrabold text-white">
-              Edit Homepage &amp; Site Content
+              Edit All Site Images, AI Cards &amp; Content
             </h3>
           </div>
           <button
@@ -1556,7 +1802,7 @@ export const CmsAllFieldsDrawer: React.FC<CmsAllFieldsDrawerProps> = ({
 
         {/* Section Tabs */}
         <div className="px-4 py-3 bg-[#FFF8F8] border-b border-[#0A0A0A]/15 flex items-center gap-2 overflow-x-auto shrink-0">
-          {sections.map((sec) => (
+          {allSections.map((sec) => (
             <button
               key={sec}
               type="button"
@@ -1574,12 +1820,1180 @@ export const CmsAllFieldsDrawer: React.FC<CmsAllFieldsDrawerProps> = ({
 
         {/* Fields List */}
         <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-5">
-          {sectionFields.map((field) => {
+          {/* DYNAMIC SECTION 0: All AI-Generated Image Cards (6 Master Slots) */}
+          {activeSection === 'AI-Generated Image Cards (All 6 Types)' && (
+            <div className="space-y-4">
+              <div className="p-3.5 rounded-xl bg-[#ECFDF5] border-2 border-[#10B981] text-xs font-bold text-[#065F46] leading-relaxed">
+                Replace any of the 6 AI-generated equipment &amp; haulage images across the entire site in one click! Uploading an image here automatically updates every card using that AI image across Product &amp; Supply, Haulage Modes, Fleet Gallery, Contracting Services, and Portfolio cards. (You can also customize individual cards separately in the other tabs or by clicking any card directly on the page.)
+              </div>
+              {AI_GENERATED_MASTER_CARDS.map((card) => {
+                const currentImg =
+                  cmsData.customImages?.[`ai_default_${card.defaultImg}`] ||
+                  (card.catSlug ? cmsData.customImages?.[`stock_cat_card_img_${card.catSlug}`] : undefined) ||
+                  (card.fleetId
+                    ? (cmsData.fleetMachines || DEFAULT_FLEET_MACHINES).find((m) => m.id === card.fleetId)?.image
+                    : undefined) ||
+                  card.defaultImg;
+                const statusNote = drawerUploadNotes[`ai_master_${card.key}`];
+
+                return (
+                  <div
+                    key={card.key}
+                    className="p-4 rounded-2xl bg-[#FFF8F8] border-2 border-[#0A0A0A]/15 space-y-3"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <label className="text-xs font-extrabold text-[#0A0A0A] uppercase tracking-wider block">
+                          {card.title}
+                        </label>
+                        <span className="text-[11px] text-[#7F1D1D] font-medium block mt-0.5">
+                          Updates: {card.usedIn}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          applyAiMasterCardImage(card, card.defaultImg, true);
+                          setDrawerUploadNotes((prev) => ({
+                            ...prev,
+                            [`ai_master_${card.key}`]: 'Reverted to default image across all linked cards.',
+                          }));
+                        }}
+                        className="text-[11px] font-mono font-bold text-[#DC2626] hover:underline cursor-pointer shrink-0"
+                      >
+                        Reset Default
+                      </button>
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                      <div className="w-full sm:w-36 h-24 rounded-xl overflow-hidden border-2 border-[#0A0A0A]/20 bg-[#0A0A0A] shrink-0">
+                        <ResilientImage
+                          src={currentImg}
+                          alt={card.title}
+                          className="w-full h-full object-cover"
+                        />
+                      </div>
+                      <div className="flex-1 space-y-2 min-w-0">
+                        <label className="inline-flex items-center justify-center gap-2 w-full sm:w-auto px-4 py-2.5 rounded-xl bg-[#DC2626] hover:bg-[#0A0A0A] text-white text-xs font-extrabold cursor-pointer transition-colors shadow-2xs">
+                          <Upload className="w-3.5 h-3.5 shrink-0" />
+                          <span>
+                            {uploadingKey === `ai_master_${card.key}`
+                              ? 'Auto-Dimensioning...'
+                              : 'Upload Replacement Image from Device'}
+                          </span>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0] ? e.target.files[0] : null;
+                              void handleDrawerDeviceUpload(
+                                `ai_master_${card.key}`,
+                                800,
+                                500,
+                                'cover',
+                                file,
+                                (dataUrl) => applyAiMasterCardImage(card, dataUrl, false)
+                              );
+                              e.target.value = '';
+                            }}
+                            className="hidden"
+                          />
+                        </label>
+                        <input
+                          type="text"
+                          value={currentImg.startsWith('data:') ? '' : currentImg}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            applyAiMasterCardImage(card, val || card.defaultImg, !val);
+                          }}
+                          placeholder={
+                            currentImg.startsWith('data:')
+                              ? 'Auto-dimensioned device image applied (800×500 px)'
+                              : 'Or paste image URL...'
+                          }
+                          className="w-full px-3 py-1.5 rounded-lg border border-[#0A0A0A]/20 bg-white text-xs font-mono text-[#0A0A0A] focus:outline-none focus:border-[#DC2626]"
+                        />
+                      </div>
+                    </div>
+                    {statusNote && (
+                      <div className="text-[11px] font-bold text-[#065F46] flex items-center gap-1.5">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-[#059669] shrink-0" />
+                        <span>{statusNote}</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* DYNAMIC SECTION 1: Product & Supply Categories */}
+          {activeSection === 'Product & Supply Categories (8 Cards)' && (
+            <div className="space-y-4">
+              <div className="p-3 rounded-xl bg-[#ECFDF5] border border-[#10B981] text-xs font-bold text-[#065F46]">
+                All 8 Product &amp; Supply Category Cards (both AI-generated and standard images). Uploaded images automatically synchronize with category thumbnail cards and spotlight showcase banners across all devices.
+              </div>
+              {[
+                { name: 'Forklifts & Lifting', slug: 'forklifts_lifting', defaultImg: '/assets/eil/pdf_img_044.jpg' },
+                { name: 'Excavators & Swamp Buggies', slug: 'excavators_swamp_buggies', defaultImg: '/assets/eil/pdf_img_028.jpg' },
+                { name: 'Dozers & Earthmoving', slug: 'dozers_earthmoving', defaultImg: '/assets/eil/gen_bulldozer.jpg' },
+                { name: 'Mobile & Crawler Cranes', slug: 'mobile_crawler_cranes', defaultImg: '/assets/eil/pdf_img_019.jpg' },
+                { name: 'Backhoes & Loaders', slug: 'backhoes_loaders', defaultImg: '/assets/eil/gen_backhoe_loader.jpg' },
+                { name: 'Lowbed & Flatbed Haulage', slug: 'lowbed_flatbed_haulage', defaultImg: '/assets/eil/gen_lowbed_trailer.jpg' },
+                { name: 'Tankers & Pneumatic Trucks', slug: 'tankers_pneumatic_trucks', defaultImg: '/assets/eil/pdf_img_021.jpg' },
+                { name: 'Dump Trucks & Support Plant', slug: 'dump_trucks_support_plant', defaultImg: '/assets/eil/gen_dump_truck.jpg' },
+              ].map((cat) => {
+                const explicitCatImg =
+                  cmsData.customImages?.[`stock_cat_card_img_${cat.slug}`] ||
+                  cmsData.customImages?.[`stock_spotlight_img_${cat.name}`];
+                const aiFallback = cmsData.customImages?.[`ai_default_${cat.defaultImg}`];
+                const currentImg =
+                  (explicitCatImg && explicitCatImg !== cat.defaultImg ? explicitCatImg : undefined) ||
+                  aiFallback ||
+                  explicitCatImg ||
+                  cat.defaultImg;
+                const statusNote = drawerUploadNotes[`stock_cat_${cat.slug}`];
+
+                return (
+                  <div key={cat.slug} className="p-4 rounded-2xl bg-[#FFF8F8] border border-[#0A0A0A]/15 space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <label className="text-xs font-extrabold text-[#0A0A0A] uppercase tracking-wider">
+                        {cat.name} Category Card Image
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (updateCmsData) {
+                            updateCmsData((prev) => {
+                              const nextCustom = { ...(prev.customImages || {}) };
+                              delete nextCustom[`stock_cat_card_img_${cat.slug}`];
+                              delete nextCustom[`stock_spotlight_img_${cat.name}`];
+                              if (cat.defaultImg.includes('/gen_')) {
+                                delete nextCustom[`ai_default_${cat.defaultImg}`];
+                              }
+                              return {
+                                ...prev,
+                                customImages: nextCustom,
+                              };
+                            });
+                          }
+                          setDrawerUploadNotes((prev) => ({
+                            ...prev,
+                            [`stock_cat_${cat.slug}`]: 'Reverted to default image.',
+                          }));
+                        }}
+                        className="text-[11px] font-mono font-bold text-[#DC2626] hover:underline cursor-pointer"
+                      >
+                        Reset Default
+                      </button>
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                      <div className="w-full sm:w-32 h-24 rounded-xl overflow-hidden border-2 border-[#0A0A0A]/20 bg-[#0A0A0A] shrink-0">
+                        <ResilientImage src={currentImg} alt={cat.name} className="w-full h-full object-cover" />
+                      </div>
+                      <div className="flex-1 space-y-2 min-w-0">
+                        <label className="inline-flex items-center justify-center gap-2 w-full sm:w-auto px-4 py-2.5 rounded-xl bg-[#DC2626] hover:bg-[#0A0A0A] text-white text-xs font-extrabold cursor-pointer transition-colors shadow-2xs">
+                          <Upload className="w-3.5 h-3.5 shrink-0" />
+                          <span>
+                            {uploadingKey === `stock_cat_${cat.slug}`
+                              ? 'Auto-Dimensioning...'
+                              : 'Upload Category Image'}
+                          </span>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0] ? e.target.files[0] : null;
+                              void handleDrawerDeviceUpload(
+                                `stock_cat_${cat.slug}`,
+                                800,
+                                500,
+                                'cover',
+                                file,
+                                (dataUrl) => {
+                                  if (updateCmsData) {
+                                    updateCmsData((prev) => {
+                                      const nextCustom: Record<string, string> = {
+                                        ...(prev.customImages || {}),
+                                        [`stock_cat_card_img_${cat.slug}`]: dataUrl,
+                                        [`stock_spotlight_img_${cat.name}`]: dataUrl,
+                                      };
+                                      if (cat.defaultImg.includes('/gen_')) {
+                                        nextCustom[`ai_default_${cat.defaultImg}`] = dataUrl;
+                                      }
+                                      return {
+                                        ...prev,
+                                        customImages: nextCustom,
+                                      };
+                                    });
+                                  }
+                                }
+                              );
+                              e.target.value = '';
+                            }}
+                            className="hidden"
+                          />
+                        </label>
+                        <input
+                          type="text"
+                          value={currentImg.startsWith('data:') ? '' : currentImg}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            if (updateCmsData) {
+                              updateCmsData((prev) => {
+                                const nextCustom: Record<string, string> = {
+                                  ...(prev.customImages || {}),
+                                  [`stock_cat_card_img_${cat.slug}`]: val,
+                                  [`stock_spotlight_img_${cat.name}`]: val,
+                                };
+                                if (cat.defaultImg.includes('/gen_') && val) {
+                                  nextCustom[`ai_default_${cat.defaultImg}`] = val;
+                                }
+                                return {
+                                  ...prev,
+                                  customImages: nextCustom,
+                                };
+                              });
+                            }
+                          }}
+                          placeholder={
+                            currentImg.startsWith('data:')
+                              ? 'Auto-dimensioned device image (800×500 px)'
+                              : 'Or paste image URL...'
+                          }
+                          className="w-full px-3 py-1.5 rounded-lg border border-[#0A0A0A]/20 bg-white text-xs font-mono text-[#0A0A0A] focus:outline-none focus:border-[#DC2626]"
+                        />
+                      </div>
+                    </div>
+                    {statusNote && (
+                      <div className="text-[11px] font-bold text-[#065F46] flex items-center gap-1.5">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-[#059669] shrink-0" />
+                        <span>{statusNote}</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* DYNAMIC SECTION 2: Haulage & Trailer Fleet Modes */}
+          {activeSection === 'Haulage & Trailer Fleet Modes' && (
+            <div className="space-y-4">
+              <div className="p-3 rounded-xl bg-[#ECFDF5] border border-[#10B981] text-xs font-bold text-[#065F46]">
+                Replace images on all Haulage &amp; Trailer Mode cards (e.g. Multi-Axle Lowbed, Flatbed, AGO/Water Tankers, Dump Trucks).
+              </div>
+              {(cmsData.deliveryOptions?.length ? cmsData.deliveryOptions : DEFAULT_DELIVERY_OPTIONS).map((opt) => {
+                const defImg = DEFAULT_DELIVERY_OPTIONS.find((d) => d.id === opt.id)?.image || opt.image;
+                const currentImg =
+                  opt.image !== defImg
+                    ? opt.image
+                    : cmsData.customImages?.[`ai_default_${defImg}`] || opt.image;
+                const statusNote = drawerUploadNotes[`opt_${opt.id}`];
+                return (
+                  <div key={opt.id} className="p-4 rounded-2xl bg-[#FFF8F8] border border-[#0A0A0A]/15 space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <label className="text-xs font-extrabold text-[#0A0A0A] uppercase tracking-wider">
+                        {opt.title} ({opt.code})
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (updateCmsData) {
+                            updateCmsData((prev) => {
+                              const nextCustom = { ...(prev.customImages || {}) };
+                              if (defImg.includes('/gen_')) {
+                                delete nextCustom[`ai_default_${defImg}`];
+                              }
+                              return {
+                                ...prev,
+                                customImages: nextCustom,
+                                deliveryOptions: (prev.deliveryOptions?.length ? prev.deliveryOptions : DEFAULT_DELIVERY_OPTIONS).map(
+                                  (o) => (o.id === opt.id ? { ...o, image: defImg } : o)
+                                ),
+                              };
+                            });
+                          }
+                          setDrawerUploadNotes((prev) => ({
+                            ...prev,
+                            [`opt_${opt.id}`]: 'Reverted to default image.',
+                          }));
+                        }}
+                        className="text-[11px] font-mono font-bold text-[#DC2626] hover:underline cursor-pointer"
+                      >
+                        Reset Default
+                      </button>
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                      <div className="w-full sm:w-32 h-24 rounded-xl overflow-hidden border-2 border-[#0A0A0A]/20 bg-[#0A0A0A] shrink-0">
+                        <ResilientImage src={currentImg} alt={opt.title} className="w-full h-full object-cover" />
+                      </div>
+                      <div className="flex-1 space-y-2 min-w-0">
+                        <label className="inline-flex items-center justify-center gap-2 w-full sm:w-auto px-4 py-2.5 rounded-xl bg-[#DC2626] hover:bg-[#0A0A0A] text-white text-xs font-extrabold cursor-pointer transition-colors shadow-2xs">
+                          <Upload className="w-3.5 h-3.5 shrink-0" />
+                          <span>
+                            {uploadingKey === `opt_${opt.id}` ? 'Auto-Dimensioning...' : 'Upload Mode Image'}
+                          </span>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0] ? e.target.files[0] : null;
+                              void handleDrawerDeviceUpload(
+                                `opt_${opt.id}`,
+                                800,
+                                500,
+                                'cover',
+                                file,
+                                (dataUrl) => {
+                                  if (updateCmsData) {
+                                    updateCmsData((prev) => {
+                                      const nextCustom = { ...(prev.customImages || {}) };
+                                      if (defImg.includes('/gen_')) {
+                                        nextCustom[`ai_default_${defImg}`] = dataUrl;
+                                      }
+                                      return {
+                                        ...prev,
+                                        customImages: nextCustom,
+                                        deliveryOptions: (prev.deliveryOptions?.length ? prev.deliveryOptions : DEFAULT_DELIVERY_OPTIONS).map(
+                                          (o) => (o.id === opt.id ? { ...o, image: dataUrl } : o)
+                                        ),
+                                      };
+                                    });
+                                  }
+                                }
+                              );
+                              e.target.value = '';
+                            }}
+                            className="hidden"
+                          />
+                        </label>
+                        <input
+                          type="text"
+                          value={currentImg.startsWith('data:') ? '' : currentImg}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            if (updateCmsData) {
+                              updateCmsData((prev) => ({
+                                ...prev,
+                                deliveryOptions: (prev.deliveryOptions?.length ? prev.deliveryOptions : DEFAULT_DELIVERY_OPTIONS).map(
+                                  (o) => (o.id === opt.id ? { ...o, image: val } : o)
+                                ),
+                              }));
+                            }
+                          }}
+                          placeholder={
+                            currentImg.startsWith('data:')
+                              ? 'Auto-dimensioned device image (800×500 px)'
+                              : 'Or paste image URL...'
+                          }
+                          className="w-full px-3 py-1.5 rounded-lg border border-[#0A0A0A]/20 bg-white text-xs font-mono text-[#0A0A0A] focus:outline-none focus:border-[#DC2626]"
+                        />
+                      </div>
+                    </div>
+                    {statusNote && (
+                      <div className="text-[11px] font-bold text-[#065F46] flex items-center gap-1.5">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-[#059669] shrink-0" />
+                        <span>{statusNote}</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* DYNAMIC SECTION 3: Heavy Equipment Lease Fleet */}
+          {activeSection === 'Heavy Equipment Lease Fleet' && (
+            <div className="space-y-4">
+              <div className="p-3 rounded-xl bg-[#ECFDF5] border border-[#10B981] text-xs font-bold text-[#065F46]">
+                Replace images on all 11 Heavy Equipment &amp; Haulage Fleet Cards (including AI-generated Dozers, Backhoes, Lowbeds, Flatbeds, Pneumatic Trucks, Dump Trucks, and standard Forklifts, Excavators &amp; Cranes).
+              </div>
+              {(cmsData.fleetMachines?.length ? cmsData.fleetMachines : DEFAULT_FLEET_MACHINES).map((m) => {
+                const defImg = DEFAULT_FLEET_MACHINES.find((dm) => dm.id === m.id)?.image || m.image;
+                const currentImg =
+                  m.image !== defImg
+                    ? m.image
+                    : cmsData.customImages?.[`ai_default_${defImg}`] || m.image;
+                const statusNote = drawerUploadNotes[`fleet_${m.id}`];
+                return (
+                  <div key={m.id} className="p-4 rounded-2xl bg-[#FFF8F8] border border-[#0A0A0A]/15 space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <label className="text-xs font-extrabold text-[#0A0A0A] uppercase tracking-wider">
+                        {m.name} ({m.modelSpec})
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (updateCmsData) {
+                            updateCmsData((prev) => {
+                              const nextCustom = { ...(prev.customImages || {}) };
+                              if (defImg.includes('/gen_')) {
+                                delete nextCustom[`ai_default_${defImg}`];
+                              }
+                              return {
+                                ...prev,
+                                customImages: nextCustom,
+                                fleetMachines: (prev.fleetMachines?.length ? prev.fleetMachines : DEFAULT_FLEET_MACHINES).map(
+                                  (item) => (item.id === m.id ? { ...item, image: defImg } : item)
+                                ),
+                              };
+                            });
+                          }
+                          setDrawerUploadNotes((prev) => ({
+                            ...prev,
+                            [`fleet_${m.id}`]: 'Reverted to default image.',
+                          }));
+                        }}
+                        className="text-[11px] font-mono font-bold text-[#DC2626] hover:underline cursor-pointer"
+                      >
+                        Reset Default
+                      </button>
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                      <div className="w-full sm:w-32 h-24 rounded-xl overflow-hidden border-2 border-[#0A0A0A]/20 bg-[#0A0A0A] shrink-0">
+                        <ResilientImage src={currentImg} alt={m.name} className="w-full h-full object-cover" />
+                      </div>
+                      <div className="flex-1 space-y-2 min-w-0">
+                        <label className="inline-flex items-center justify-center gap-2 w-full sm:w-auto px-4 py-2.5 rounded-xl bg-[#DC2626] hover:bg-[#0A0A0A] text-white text-xs font-extrabold cursor-pointer transition-colors shadow-2xs">
+                          <Upload className="w-3.5 h-3.5 shrink-0" />
+                          <span>
+                            {uploadingKey === `fleet_${m.id}` ? 'Auto-Dimensioning...' : 'Upload Machine Image'}
+                          </span>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0] ? e.target.files[0] : null;
+                              void handleDrawerDeviceUpload(
+                                `fleet_${m.id}`,
+                                960,
+                                600,
+                                'cover',
+                                file,
+                                (dataUrl) => {
+                                  if (updateCmsData) {
+                                    updateCmsData((prev) => {
+                                      const nextCustom = { ...(prev.customImages || {}) };
+                                      if (defImg.includes('/gen_')) {
+                                        nextCustom[`ai_default_${defImg}`] = dataUrl;
+                                      }
+                                      return {
+                                        ...prev,
+                                        customImages: nextCustom,
+                                        fleetMachines: (prev.fleetMachines?.length ? prev.fleetMachines : DEFAULT_FLEET_MACHINES).map(
+                                          (item) => (item.id === m.id ? { ...item, image: dataUrl } : item)
+                                        ),
+                                      };
+                                    });
+                                  }
+                                }
+                              );
+                              e.target.value = '';
+                            }}
+                            className="hidden"
+                          />
+                        </label>
+                        <input
+                          type="text"
+                          value={currentImg.startsWith('data:') ? '' : currentImg}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            if (updateCmsData) {
+                              updateCmsData((prev) => ({
+                                ...prev,
+                                fleetMachines: (prev.fleetMachines?.length ? prev.fleetMachines : DEFAULT_FLEET_MACHINES).map(
+                                  (item) => (item.id === m.id ? { ...item, image: val } : item)
+                                ),
+                              }));
+                            }
+                          }}
+                          placeholder={
+                            currentImg.startsWith('data:')
+                              ? 'Auto-dimensioned device image (960×600 px)'
+                              : 'Or paste image URL...'
+                          }
+                          className="w-full px-3 py-1.5 rounded-lg border border-[#0A0A0A]/20 bg-white text-xs font-mono text-[#0A0A0A] focus:outline-none focus:border-[#DC2626]"
+                        />
+                      </div>
+                    </div>
+                    {statusNote && (
+                      <div className="text-[11px] font-bold text-[#065F46] flex items-center gap-1.5">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-[#059669] shrink-0" />
+                        <span>{statusNote}</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* DYNAMIC SECTION 4: Core Contracting Services (Main + Secondary Images) */}
+          {activeSection === 'Core Contracting Services' && (
+            <div className="space-y-4">
+              <div className="p-3 rounded-xl bg-[#ECFDF5] border border-[#10B981] text-xs font-bold text-[#065F46]">
+                Replace both Primary Card Images and Secondary Detail Images on all 6 Core Contracting Services (including Service 02 Heavy Haulage Lowbed &amp; Service 03 Dozer/Swamp Buggy).
+              </div>
+              {(cmsData.servicesList?.length ? cmsData.servicesList : SERVICES_LIST).map((srv) => {
+                const defSrv = SERVICES_LIST.find((s) => s.id === srv.id);
+                const defImg = defSrv?.image || srv.image;
+                const defSecImg = defSrv?.secondaryImage || srv.secondaryImage || '';
+                const currentImg =
+                  srv.image !== defImg
+                    ? srv.image
+                    : cmsData.customImages?.[`ai_default_${defImg}`] || srv.image;
+                const rawSecImg = srv.secondaryImage || '';
+                const currentSecImg =
+                  rawSecImg && rawSecImg !== defSecImg
+                    ? rawSecImg
+                    : defSecImg
+                    ? cmsData.customImages?.[`ai_default_${defSecImg}`] || rawSecImg
+                    : rawSecImg;
+                const statusNote = drawerUploadNotes[`srv_${srv.id}`];
+                const secStatusNote = drawerUploadNotes[`srv_sec_${srv.id}`];
+
+                return (
+                  <div key={srv.id} className="p-4 rounded-2xl bg-[#FFF8F8] border border-[#0A0A0A]/15 space-y-4">
+                    <div className="flex items-center justify-between gap-2">
+                      <label className="text-xs font-extrabold text-[#0A0A0A] uppercase tracking-wider">
+                        Service {srv.number}: {srv.title} (Primary Image)
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (updateCmsData) {
+                            updateCmsData((prev) => {
+                              const nextCustom = { ...(prev.customImages || {}) };
+                              if (defImg.includes('/gen_')) {
+                                delete nextCustom[`ai_default_${defImg}`];
+                              }
+                              return {
+                                ...prev,
+                                customImages: nextCustom,
+                                servicesList: (prev.servicesList?.length ? prev.servicesList : SERVICES_LIST).map(
+                                  (item) => (item.id === srv.id ? { ...item, image: defImg } : item)
+                                ),
+                              };
+                            });
+                          }
+                          setDrawerUploadNotes((prev) => ({
+                            ...prev,
+                            [`srv_${srv.id}`]: 'Reverted primary image to default.',
+                          }));
+                        }}
+                        className="text-[11px] font-mono font-bold text-[#DC2626] hover:underline cursor-pointer"
+                      >
+                        Reset Default
+                      </button>
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                      <div className="w-full sm:w-32 h-24 rounded-xl overflow-hidden border-2 border-[#0A0A0A]/20 bg-[#0A0A0A] shrink-0">
+                        <ResilientImage src={currentImg} alt={srv.title} className="w-full h-full object-cover" />
+                      </div>
+                      <div className="flex-1 space-y-2 min-w-0">
+                        <label className="inline-flex items-center justify-center gap-2 w-full sm:w-auto px-4 py-2.5 rounded-xl bg-[#DC2626] hover:bg-[#0A0A0A] text-white text-xs font-extrabold cursor-pointer transition-colors shadow-2xs">
+                          <Upload className="w-3.5 h-3.5 shrink-0" />
+                          <span>
+                            {uploadingKey === `srv_${srv.id}` ? 'Auto-Dimensioning...' : 'Upload Primary Service Image'}
+                          </span>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0] ? e.target.files[0] : null;
+                              void handleDrawerDeviceUpload(
+                                `srv_${srv.id}`,
+                                800,
+                                600,
+                                'cover',
+                                file,
+                                (dataUrl) => {
+                                  if (updateCmsData) {
+                                    updateCmsData((prev) => {
+                                      const nextCustom = { ...(prev.customImages || {}) };
+                                      if (defImg.includes('/gen_')) {
+                                        nextCustom[`ai_default_${defImg}`] = dataUrl;
+                                      }
+                                      return {
+                                        ...prev,
+                                        customImages: nextCustom,
+                                        servicesList: (prev.servicesList?.length ? prev.servicesList : SERVICES_LIST).map(
+                                          (item) => (item.id === srv.id ? { ...item, image: dataUrl } : item)
+                                        ),
+                                      };
+                                    });
+                                  }
+                                }
+                              );
+                              e.target.value = '';
+                            }}
+                            className="hidden"
+                          />
+                        </label>
+                        <input
+                          type="text"
+                          value={currentImg.startsWith('data:') ? '' : currentImg}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            if (updateCmsData) {
+                              updateCmsData((prev) => ({
+                                ...prev,
+                                servicesList: (prev.servicesList?.length ? prev.servicesList : SERVICES_LIST).map(
+                                  (item) => (item.id === srv.id ? { ...item, image: val } : item)
+                                ),
+                              }));
+                            }
+                          }}
+                          placeholder={
+                            currentImg.startsWith('data:')
+                              ? 'Auto-dimensioned device image (800×600 px)'
+                              : 'Or paste image URL...'
+                          }
+                          className="w-full px-3 py-1.5 rounded-lg border border-[#0A0A0A]/20 bg-white text-xs font-mono text-[#0A0A0A] focus:outline-none focus:border-[#DC2626]"
+                        />
+                      </div>
+                    </div>
+                    {statusNote && (
+                      <div className="text-[11px] font-bold text-[#065F46] flex items-center gap-1.5">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-[#059669] shrink-0" />
+                        <span>{statusNote}</span>
+                      </div>
+                    )}
+
+                    {/* Secondary Service Image Control */}
+                    <div className="pt-3 border-t border-[#0A0A0A]/10 space-y-2.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[11px] font-extrabold text-[#3B0707] uppercase tracking-wider">
+                          Service {srv.number} Secondary Detail Image
+                        </span>
+                        {defSecImg && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (updateCmsData) {
+                                updateCmsData((prev) => {
+                                  const nextCustom = { ...(prev.customImages || {}) };
+                                  if (defSecImg.includes('/gen_')) {
+                                    delete nextCustom[`ai_default_${defSecImg}`];
+                                  }
+                                  return {
+                                    ...prev,
+                                    customImages: nextCustom,
+                                    servicesList: (prev.servicesList?.length ? prev.servicesList : SERVICES_LIST).map(
+                                      (item) =>
+                                        item.id === srv.id ? { ...item, secondaryImage: defSecImg } : item
+                                    ),
+                                  };
+                                });
+                              }
+                              setDrawerUploadNotes((prev) => ({
+                                ...prev,
+                                [`srv_sec_${srv.id}`]: 'Reverted secondary image to default.',
+                              }));
+                            }}
+                            className="text-[11px] font-mono font-bold text-[#DC2626] hover:underline cursor-pointer"
+                          >
+                            Reset Secondary
+                          </button>
+                        )}
+                      </div>
+                      <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                        <div className="w-full sm:w-28 h-20 rounded-xl overflow-hidden border border-[#0A0A0A]/20 bg-[#0A0A0A] shrink-0">
+                          <ResilientImage
+                            src={currentSecImg || currentImg}
+                            alt={`${srv.title} Secondary`}
+                            className="w-full h-full object-cover"
+                          />
+                        </div>
+                        <div className="flex-1 space-y-2 min-w-0">
+                          <label className="inline-flex items-center justify-center gap-2 w-full sm:w-auto px-3.5 py-2 rounded-xl bg-[#0A0A0A] hover:bg-[#DC2626] text-white text-xs font-extrabold cursor-pointer transition-colors">
+                            <Upload className="w-3.5 h-3.5 shrink-0" />
+                            <span>
+                              {uploadingKey === `srv_sec_${srv.id}`
+                                ? 'Auto-Dimensioning...'
+                                : 'Upload Secondary Image'}
+                            </span>
+                            <input
+                              type="file"
+                              accept="image/*"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0] ? e.target.files[0] : null;
+                                void handleDrawerDeviceUpload(
+                                  `srv_sec_${srv.id}`,
+                                  800,
+                                  500,
+                                  'cover',
+                                  file,
+                                  (dataUrl) => {
+                                    if (updateCmsData) {
+                                      updateCmsData((prev) => {
+                                        const nextCustom = { ...(prev.customImages || {}) };
+                                        if (defSecImg.includes('/gen_')) {
+                                          nextCustom[`ai_default_${defSecImg}`] = dataUrl;
+                                        }
+                                        return {
+                                          ...prev,
+                                          customImages: nextCustom,
+                                          servicesList: (prev.servicesList?.length ? prev.servicesList : SERVICES_LIST).map(
+                                            (item) =>
+                                              item.id === srv.id
+                                                ? { ...item, secondaryImage: dataUrl }
+                                                : item
+                                          ),
+                                        };
+                                      });
+                                    }
+                                  }
+                                );
+                                e.target.value = '';
+                              }}
+                              className="hidden"
+                            />
+                          </label>
+                        </div>
+                      </div>
+                      {secStatusNote && (
+                        <div className="text-[11px] font-bold text-[#065F46] flex items-center gap-1.5">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-[#059669] shrink-0" />
+                          <span>{secStatusNote}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* DYNAMIC SECTION 5: Mobilization Portfolio Cards */}
+          {activeSection === 'Mobilization Portfolio Cards' && (
+            <div className="space-y-4">
+              <div className="p-3 rounded-xl bg-[#ECFDF5] border border-[#10B981] text-xs font-bold text-[#065F46]">
+                Replace images on all 6 Completed Mobilization &amp; Fleet Capability Portfolio cards (including Lowbed, Flatbed, Pneumatic Silo, and Dump Truck cards).
+              </div>
+              {(cmsData.fabricationPortfolio?.length ? cmsData.fabricationPortfolio : DEFAULT_FABRICATION_PORTFOLIO).map((fab) => {
+                const defImg = DEFAULT_FABRICATION_PORTFOLIO.find((p) => p.id === fab.id)?.image || fab.image;
+                const currentImg =
+                  fab.image !== defImg
+                    ? fab.image
+                    : cmsData.customImages?.[`ai_default_${defImg}`] || fab.image;
+                const statusNote = drawerUploadNotes[`fab_${fab.id}`];
+                return (
+                  <div key={fab.id} className="p-4 rounded-2xl bg-[#FFF8F8] border border-[#0A0A0A]/15 space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <label className="text-xs font-extrabold text-[#0A0A0A] uppercase tracking-wider">
+                        {fab.title}
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (updateCmsData) {
+                            updateCmsData((prev) => {
+                              const nextCustom = { ...(prev.customImages || {}) };
+                              if (defImg.includes('/gen_')) {
+                                delete nextCustom[`ai_default_${defImg}`];
+                              }
+                              return {
+                                ...prev,
+                                customImages: nextCustom,
+                                fabricationPortfolio: (prev.fabricationPortfolio?.length ? prev.fabricationPortfolio : DEFAULT_FABRICATION_PORTFOLIO).map(
+                                  (item) => (item.id === fab.id ? { ...item, image: defImg } : item)
+                                ),
+                              };
+                            });
+                          }
+                          setDrawerUploadNotes((prev) => ({
+                            ...prev,
+                            [`fab_${fab.id}`]: 'Reverted to default image.',
+                          }));
+                        }}
+                        className="text-[11px] font-mono font-bold text-[#DC2626] hover:underline cursor-pointer"
+                      >
+                        Reset Default
+                      </button>
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                      <div className="w-full sm:w-32 h-24 rounded-xl overflow-hidden border-2 border-[#0A0A0A]/20 bg-[#0A0A0A] shrink-0">
+                        <ResilientImage src={currentImg} alt={fab.title} className="w-full h-full object-cover" />
+                      </div>
+                      <div className="flex-1 space-y-2 min-w-0">
+                        <label className="inline-flex items-center justify-center gap-2 w-full sm:w-auto px-4 py-2.5 rounded-xl bg-[#DC2626] hover:bg-[#0A0A0A] text-white text-xs font-extrabold cursor-pointer transition-colors shadow-2xs">
+                          <Upload className="w-3.5 h-3.5 shrink-0" />
+                          <span>
+                            {uploadingKey === `fab_${fab.id}` ? 'Auto-Dimensioning...' : 'Upload Portfolio Image'}
+                          </span>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0] ? e.target.files[0] : null;
+                              void handleDrawerDeviceUpload(
+                                `fab_${fab.id}`,
+                                800,
+                                500,
+                                'cover',
+                                file,
+                                (dataUrl) => {
+                                  if (updateCmsData) {
+                                    updateCmsData((prev) => {
+                                      const nextCustom = { ...(prev.customImages || {}) };
+                                      if (defImg.includes('/gen_')) {
+                                        nextCustom[`ai_default_${defImg}`] = dataUrl;
+                                      }
+                                      return {
+                                        ...prev,
+                                        customImages: nextCustom,
+                                        fabricationPortfolio: (prev.fabricationPortfolio?.length ? prev.fabricationPortfolio : DEFAULT_FABRICATION_PORTFOLIO).map(
+                                          (item) => (item.id === fab.id ? { ...item, image: dataUrl } : item)
+                                        ),
+                                      };
+                                    });
+                                  }
+                                }
+                              );
+                              e.target.value = '';
+                            }}
+                            className="hidden"
+                          />
+                        </label>
+                        <input
+                          type="text"
+                          value={currentImg.startsWith('data:') ? '' : currentImg}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            if (updateCmsData) {
+                              updateCmsData((prev) => ({
+                                ...prev,
+                                fabricationPortfolio: (prev.fabricationPortfolio?.length ? prev.fabricationPortfolio : DEFAULT_FABRICATION_PORTFOLIO).map(
+                                  (item) => (item.id === fab.id ? { ...item, image: val } : item)
+                                ),
+                              }));
+                            }
+                          }}
+                          placeholder={
+                            currentImg.startsWith('data:')
+                              ? 'Auto-dimensioned device image (800×500 px)'
+                              : 'Or paste image URL...'
+                          }
+                          className="w-full px-3 py-1.5 rounded-lg border border-[#0A0A0A]/20 bg-white text-xs font-mono text-[#0A0A0A] focus:outline-none focus:border-[#DC2626]"
+                        />
+                      </div>
+                    </div>
+                    {statusNote && (
+                      <div className="text-[11px] font-bold text-[#065F46] flex items-center gap-1.5">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-[#059669] shrink-0" />
+                        <span>{statusNote}</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* DYNAMIC SECTION 6: Fleet Technical Specs Guide (9 Cards) */}
+          {activeSection === 'Fleet Technical Specs Guide (9 Cards)' && (
+            <div className="space-y-4">
+              <div className="p-3 rounded-xl bg-[#ECFDF5] border border-[#10B981] text-xs font-bold text-[#065F46]">
+                Replace images on all 9 Equipment &amp; Haulage Fleet Technical Matrix cards (Product &amp; Supply Page).
+              </div>
+              {(cmsData.industrialGases?.length ? cmsData.industrialGases : INDUSTRIAL_GASES_DETAIL).map((gas, gIdx) => {
+                const defImg = INDUSTRIAL_GASES_DETAIL[gIdx]?.image || gas.image || '/assets/eil/pdf_img_028.jpg';
+                const currentImg =
+                  gas.image && gas.image !== defImg
+                    ? gas.image
+                    : cmsData.customImages?.[`ai_default_${defImg}`] || gas.image || defImg;
+                const statusNote = drawerUploadNotes[`gas_${gIdx}`];
+                return (
+                  <div key={`${gas.name}-${gIdx}`} className="p-4 rounded-2xl bg-[#FFF8F8] border border-[#0A0A0A]/15 space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <label className="text-xs font-extrabold text-[#0A0A0A] uppercase tracking-wider">
+                        {gas.name} ({gas.formula})
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (updateCmsData) {
+                            updateCmsData((prev) => ({
+                              ...prev,
+                              industrialGases: (prev.industrialGases?.length ? prev.industrialGases : INDUSTRIAL_GASES_DETAIL).map(
+                                (item, idx) => (idx === gIdx ? { ...item, image: defImg } : item)
+                              ),
+                            }));
+                          }
+                          setDrawerUploadNotes((prev) => ({
+                            ...prev,
+                            [`gas_${gIdx}`]: 'Reverted to default image.',
+                          }));
+                        }}
+                        className="text-[11px] font-mono font-bold text-[#DC2626] hover:underline cursor-pointer"
+                      >
+                        Reset Default
+                      </button>
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                      <div className="w-full sm:w-32 h-24 rounded-xl overflow-hidden border-2 border-[#0A0A0A]/20 bg-[#0A0A0A] shrink-0">
+                        <ResilientImage src={currentImg} alt={gas.name} className="w-full h-full object-cover" />
+                      </div>
+                      <div className="flex-1 space-y-2 min-w-0">
+                        <label className="inline-flex items-center justify-center gap-2 w-full sm:w-auto px-4 py-2.5 rounded-xl bg-[#DC2626] hover:bg-[#0A0A0A] text-white text-xs font-extrabold cursor-pointer transition-colors shadow-2xs">
+                          <Upload className="w-3.5 h-3.5 shrink-0" />
+                          <span>
+                            {uploadingKey === `gas_${gIdx}` ? 'Auto-Dimensioning...' : 'Upload Spec Card Image'}
+                          </span>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0] ? e.target.files[0] : null;
+                              void handleDrawerDeviceUpload(
+                                `gas_${gIdx}`,
+                                800,
+                                500,
+                                'cover',
+                                file,
+                                (dataUrl) => {
+                                  if (updateCmsData) {
+                                    updateCmsData((prev) => {
+                                      const nextCustom = { ...(prev.customImages || {}) };
+                                      if (defImg.includes('/gen_')) {
+                                        nextCustom[`ai_default_${defImg}`] = dataUrl;
+                                      }
+                                      return {
+                                        ...prev,
+                                        customImages: nextCustom,
+                                        industrialGases: (prev.industrialGases?.length ? prev.industrialGases : INDUSTRIAL_GASES_DETAIL).map(
+                                          (item, idx) => (idx === gIdx ? { ...item, image: dataUrl } : item)
+                                        ),
+                                      };
+                                    });
+                                  }
+                                }
+                              );
+                              e.target.value = '';
+                            }}
+                            className="hidden"
+                          />
+                        </label>
+                      </div>
+                    </div>
+                    {statusNote && (
+                      <div className="text-[11px] font-bold text-[#065F46] flex items-center gap-1.5">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-[#059669] shrink-0" />
+                        <span>{statusNote}</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* DYNAMIC SECTION 7: Site Survey & Support Modes (4 Cards) */}
+          {activeSection === 'Site Survey & Support Modes (4 Cards)' && (
+            <div className="space-y-4">
+              <div className="p-3 rounded-xl bg-[#ECFDF5] border border-[#10B981] text-xs font-bold text-[#065F46]">
+                Replace images on the 4 Pre-Mobilization Site Survey &amp; On-Site Fleet Support Mode cards.
+              </div>
+              {(cmsData.cylinderServiceModes?.length ? cmsData.cylinderServiceModes : DEFAULT_CYLINDER_SERVICE_MODES).map((mode) => {
+                const defImg = DEFAULT_CYLINDER_SERVICE_MODES.find((m) => m.id === mode.id)?.image || mode.image;
+                const currentImg = mode.image;
+                const statusNote = drawerUploadNotes[`cyl_${mode.id}`];
+                return (
+                  <div key={mode.id} className="p-4 rounded-2xl bg-[#FFF8F8] border border-[#0A0A0A]/15 space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <label className="text-xs font-extrabold text-[#0A0A0A] uppercase tracking-wider">
+                        {mode.title} ({mode.badge})
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (updateCmsData) {
+                            updateCmsData((prev) => ({
+                              ...prev,
+                              cylinderServiceModes: (prev.cylinderServiceModes?.length ? prev.cylinderServiceModes : DEFAULT_CYLINDER_SERVICE_MODES).map(
+                                (item) => (item.id === mode.id ? { ...item, image: defImg } : item)
+                              ),
+                            }));
+                          }
+                          setDrawerUploadNotes((prev) => ({
+                            ...prev,
+                            [`cyl_${mode.id}`]: 'Reverted to default image.',
+                          }));
+                        }}
+                        className="text-[11px] font-mono font-bold text-[#DC2626] hover:underline cursor-pointer"
+                      >
+                        Reset Default
+                      </button>
+                    </div>
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                      <div className="w-full sm:w-32 h-24 rounded-xl overflow-hidden border-2 border-[#0A0A0A]/20 bg-[#0A0A0A] shrink-0">
+                        <ResilientImage src={currentImg} alt={mode.title} className="w-full h-full object-cover" />
+                      </div>
+                      <div className="flex-1 space-y-2 min-w-0">
+                        <label className="inline-flex items-center justify-center gap-2 w-full sm:w-auto px-4 py-2.5 rounded-xl bg-[#DC2626] hover:bg-[#0A0A0A] text-white text-xs font-extrabold cursor-pointer transition-colors shadow-2xs">
+                          <Upload className="w-3.5 h-3.5 shrink-0" />
+                          <span>
+                            {uploadingKey === `cyl_${mode.id}` ? 'Auto-Dimensioning...' : 'Upload Support Card Image'}
+                          </span>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0] ? e.target.files[0] : null;
+                              void handleDrawerDeviceUpload(
+                                `cyl_${mode.id}`,
+                                800,
+                                500,
+                                'cover',
+                                file,
+                                (dataUrl) => {
+                                  if (updateCmsData) {
+                                    updateCmsData((prev) => ({
+                                      ...prev,
+                                      cylinderServiceModes: (prev.cylinderServiceModes?.length ? prev.cylinderServiceModes : DEFAULT_CYLINDER_SERVICE_MODES).map(
+                                        (item) => (item.id === mode.id ? { ...item, image: dataUrl } : item)
+                                      ),
+                                    }));
+                                  }
+                                }
+                              );
+                              e.target.value = '';
+                            }}
+                            className="hidden"
+                          />
+                        </label>
+                      </div>
+                    </div>
+                    {statusNote && (
+                      <div className="text-[11px] font-bold text-[#065F46] flex items-center gap-1.5">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-[#059669] shrink-0" />
+                        <span>{statusNote}</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* DYNAMIC SECTION 8: Page Header Banners (12 Cards) */}
+          {activeSection === 'Page Header Banners (10 Cards)' && (
+            <div className="space-y-4">
+              <div className="p-3 rounded-xl bg-[#ECFDF5] border border-[#10B981] text-xs font-bold text-[#065F46]">
+                Replace any of the top header showcase images across Product &amp; Supply, Services, Haulage Operations, How to Lease, Contact &amp; Help, and About Us pages.
+              </div>
+              {[
+                { key: 'ps_banner_img_1', label: 'Product & Supply Banner Image 1', defaultImg: '/assets/eil/pdf_img_044.jpg' },
+                { key: 'ps_banner_img_2', label: 'Product & Supply Banner Image 2 (Lowbed AI Default)', defaultImg: '/assets/eil/gen_lowbed_trailer.jpg' },
+                { key: 'srv_banner_img_1', label: 'Services Banner Image 1', defaultImg: '/assets/eil/pdf_img_019.jpg' },
+                { key: 'srv_banner_img_2', label: 'Services Banner Image 2', defaultImg: '/assets/eil/pdf_img_028.jpg' },
+                { key: 'piping_img_1', label: 'Haulage Operations Tab Image 1 (Lowbed AI Default)', defaultImg: '/assets/eil/gen_lowbed_trailer.jpg' },
+                { key: 'piping_img_2', label: 'Haulage Operations Tab Image 2', defaultImg: '/assets/eil/pdf_img_021.jpg' },
+                { key: 'htb_banner_img_1', label: 'How to Lease Banner Image 1', defaultImg: '/assets/eil/pdf_img_192.jpg' },
+                { key: 'htb_banner_img_2', label: 'How to Lease Banner Image 2', defaultImg: '/assets/eil/pdf_img_021.jpg' },
+                { key: 'ch_banner_img_1', label: 'Contact & Help Banner Image 1', defaultImg: '/assets/eil/pdf_img_220.jpg' },
+                { key: 'ch_banner_img_2', label: 'Contact & Help Banner Image 2', defaultImg: '/assets/eil/pdf_img_222.jpg' },
+                { key: 'abt_banner_img_1', label: 'About Us Banner Image 1', defaultImg: '/assets/eil/pdf_img_027.jpg' },
+                { key: 'abt_banner_img_2', label: 'About Us Banner Image 2', defaultImg: '/assets/eil/pdf_img_024.jpg' },
+              ].map((bItem) => {
+                const currentImg =
+                  cmsData.customImages?.[bItem.key] ||
+                  cmsData.customImages?.[`ai_default_${bItem.defaultImg}`] ||
+                  bItem.defaultImg;
+                const statusNote = drawerUploadNotes[bItem.key];
+                return (
+                  <div key={bItem.key} className="p-4 rounded-2xl bg-[#FFF8F8] border border-[#0A0A0A]/15 space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <label className="text-xs font-extrabold text-[#0A0A0A] uppercase tracking-wider">
+                        {bItem.label}
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (updateCmsData) {
+                            updateCmsData((prev) => {
+                              const nextCustom = { ...(prev.customImages || {}) };
+                              delete nextCustom[bItem.key];
+                              return { ...prev, customImages: nextCustom };
+                            });
+                          }
+                          setDrawerUploadNotes((prev) => ({
+                            ...prev,
+                            [bItem.key]: 'Reverted to default banner image.',
+                          }));
+                        }}
+                        className="text-[11px] font-mono font-bold text-[#DC2626] hover:underline cursor-pointer"
+                      >
+                        Reset Default
+                      </button>
+                    </div>
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                      <div className="w-full sm:w-32 h-24 rounded-xl overflow-hidden border-2 border-[#0A0A0A]/20 bg-[#0A0A0A] shrink-0">
+                        <ResilientImage src={currentImg} alt={bItem.label} className="w-full h-full object-cover" />
+                      </div>
+                      <div className="flex-1 space-y-2 min-w-0">
+                        <label className="inline-flex items-center justify-center gap-2 w-full sm:w-auto px-4 py-2.5 rounded-xl bg-[#DC2626] hover:bg-[#0A0A0A] text-white text-xs font-extrabold cursor-pointer transition-colors shadow-2xs">
+                          <Upload className="w-3.5 h-3.5 shrink-0" />
+                          <span>
+                            {uploadingKey === bItem.key ? 'Auto-Dimensioning...' : 'Upload Banner Image'}
+                          </span>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0] ? e.target.files[0] : null;
+                              void handleDrawerDeviceUpload(
+                                bItem.key,
+                                800,
+                                500,
+                                'cover',
+                                file,
+                                (dataUrl) => {
+                                  if (updateCmsData) {
+                                    updateCmsData((prev) => ({
+                                      ...prev,
+                                      customImages: {
+                                        ...prev.customImages,
+                                        [bItem.key]: dataUrl,
+                                      },
+                                    }));
+                                  }
+                                }
+                              );
+                              e.target.value = '';
+                            }}
+                            className="hidden"
+                          />
+                        </label>
+                      </div>
+                    </div>
+                    {statusNote && (
+                      <div className="text-[11px] font-bold text-[#065F46] flex items-center gap-1.5">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-[#059669] shrink-0" />
+                        <span>{statusNote}</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* BASE STATIC SECTIONS */}
+          {baseSections.includes(activeSection) && sectionFields.map((field) => {
             const val = (cmsData[field.key] as string) || '';
             const isImg = field.type === 'image';
-            const targetW = field.targetWidth || 1200;
-            const targetH = field.targetHeight || 900;
-            const aspectLabel = field.aspectLabel || '4:3';
+            const targetW = field.targetWidth || 960;
+            const targetH = field.targetHeight || 600;
+            const aspectLabel = field.aspectLabel || '16:10';
             const statusNote = drawerUploadNotes[field.key];
 
             return (
@@ -1641,12 +3055,17 @@ export const CmsAllFieldsDrawer: React.FC<CmsAllFieldsDrawerProps> = ({
                           <input
                             type="file"
                             accept="image/*"
-                            onChange={(e) =>
-                              handleDrawerDeviceUpload(
-                                field,
-                                e.target.files?.[0] ? e.target.files[0] : null
-                              )
-                            }
+                            onChange={(e) => {
+                              const file = e.target.files?.[0] ? e.target.files[0] : null;
+                              void handleDrawerDeviceUpload(
+                                field.key,
+                                targetW,
+                                targetH,
+                                field.fitMode || 'cover',
+                                file
+                              );
+                              e.target.value = '';
+                            }}
                             className="hidden"
                           />
                         </label>

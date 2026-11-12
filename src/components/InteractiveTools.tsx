@@ -467,10 +467,10 @@ export const GasDeliveryExplainerTool: React.FC<GasDeliveryExplainerProps> = ({
                   <div className="h-40 relative overflow-hidden bg-[#0A0A0A]">
                     <CmsImage
                       src={opt.image}
-                      defaultSrc={opt.image}
+                      defaultSrc={DEFAULT_DELIVERY_OPTIONS.find((d) => d.id === opt.id)?.image || opt.image}
                       alt={opt.title}
                       label={`${opt.title} — Image`}
-                      section="Gas Delivery Options"
+                      section="Haulage & Trailer Modes"
                       targetWidth={800}
                       targetHeight={500}
                       aspectLabel="16:10 Card"
@@ -480,7 +480,7 @@ export const GasDeliveryExplainerTool: React.FC<GasDeliveryExplainerProps> = ({
                       className="w-full h-full object-cover hover:scale-110 transition-transform duration-500"
                     />
                     <div className="absolute inset-0 bg-gradient-to-t from-[#0A0A0A]/90 via-transparent to-transparent pointer-events-none" />
-                    <div className="absolute top-3 left-3 right-3 flex flex-wrap items-center justify-between gap-1.5 z-20">
+                    <div className={`absolute top-3 left-3 right-3 flex flex-wrap items-center justify-between gap-1.5 ${isEditMode ? 'z-50' : 'z-20'}`}>
                       <span className="px-2.5 py-0.5 rounded bg-[#0A0A0A]/90 text-white font-mono text-[10px] font-extrabold">
                         <CmsText
                           value={opt.code}
@@ -1831,7 +1831,7 @@ export const EquipmentHireTool: React.FC<EquipmentHireToolProps> = ({
                   <div className="h-52 relative overflow-hidden bg-[#0A0A0A]">
                     <CmsImage
                       src={machine.image}
-                      defaultSrc={machine.image}
+                      defaultSrc={DEFAULT_FLEET_MACHINES.find((m) => m.id === machine.id)?.image || machine.image}
                       alt={machine.name}
                       label={`${machine.name} — Image`}
                       section="Fleet Machines"
@@ -1847,7 +1847,7 @@ export const EquipmentHireTool: React.FC<EquipmentHireToolProps> = ({
                       className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
                     />
                     <div className="absolute inset-0 bg-gradient-to-t from-[#0A0A0A]/90 via-transparent to-transparent pointer-events-none" />
-                    <div className="absolute top-3 left-3 right-3 flex flex-wrap items-center justify-between gap-1.5 z-20">
+                    <div className={`absolute top-3 left-3 right-3 flex flex-wrap items-center justify-between gap-1.5 ${isEditMode ? 'z-50' : 'z-20'}`}>
                       <span className="px-2.5 py-1 rounded bg-[#0A0A0A]/90 text-white font-mono text-[10px] font-extrabold">
                         <CmsText
                           value={machine.category}

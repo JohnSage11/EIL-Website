@@ -12,11 +12,12 @@ import {
   PlusCircle,
 } from 'lucide-react';
 import {
+  SERVICES_LIST,
   ServiceDetail,
   TrainingCourse,
   EIL_SLOGAN,
 } from '../data/eilData';
-import { CmsFabricationPortfolioItem } from '../data/cmsDefaults';
+import { DEFAULT_FABRICATION_PORTFOLIO, CmsFabricationPortfolioItem } from '../data/cmsDefaults';
 import { CmsText, CmsImage, useCms } from './StealthCmsAdmin';
 import { QuoteRecord } from './OverlaysAndDrawers';
 import { EquipmentHireTool, CylinderServicesTool } from './InteractiveTools';
@@ -451,7 +452,7 @@ export const ServicesAndTrainingSection: React.FC<ServicesAndTrainingSectionProp
                   >
                     <CmsImage
                       src={srv.image}
-                      defaultSrc={srv.image}
+                      defaultSrc={SERVICES_LIST.find((s) => s.id === srv.id)?.image || srv.image}
                       alt={srv.title}
                       label={`Service ${srv.number} Card Image`}
                       section="Core Contracting Services"
@@ -477,12 +478,12 @@ export const ServicesAndTrainingSection: React.FC<ServicesAndTrainingSectionProp
                           handleDeleteService(srv.id);
                         }}
                         title="Delete this service"
-                        className="absolute top-2.5 right-2.5 z-40 p-1.5 rounded-lg bg-[#DC2626] text-white hover:bg-red-700 shadow-md cursor-pointer"
+                        className="absolute top-2.5 right-2.5 z-50 p-1.5 rounded-lg bg-[#DC2626] text-white hover:bg-red-700 shadow-md cursor-pointer"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
                     )}
-                    <div className="absolute inset-x-0 bottom-0 p-5 sm:p-4 flex flex-col justify-end z-30">
+                    <div className="absolute inset-x-0 bottom-0 p-5 sm:p-4 flex flex-col justify-end z-20 pointer-events-none">
                       <span className="font-mono-num text-2xl sm:text-3xl font-extrabold text-[#FFFFFF]">
                         <CmsText
                           value={srv.number}
@@ -524,7 +525,10 @@ export const ServicesAndTrainingSection: React.FC<ServicesAndTrainingSectionProp
                   <div className="rounded-2xl overflow-hidden border-2 border-[#0A0A0A] aspect-[16/10] sm:aspect-auto sm:h-72 bg-[#0A0A0A]">
                     <CmsImage
                       src={activeService.image}
-                      defaultSrc={activeService.image}
+                      defaultSrc={
+                        SERVICES_LIST.find((s) => s.id === activeService.id)?.image ||
+                        activeService.image
+                      }
                       alt={activeService.title}
                       label={`${activeService.shortTitle} Main Image`}
                       section="Core Contracting Services"
@@ -541,7 +545,12 @@ export const ServicesAndTrainingSection: React.FC<ServicesAndTrainingSectionProp
                     <div className="rounded-2xl overflow-hidden border-2 border-[#0A0A0A]/20 aspect-[16/10] sm:aspect-auto sm:h-48 bg-[#FFF8F8]">
                       <CmsImage
                         src={activeService.secondaryImage || activeService.image}
-                        defaultSrc={activeService.secondaryImage || activeService.image}
+                        defaultSrc={
+                          SERVICES_LIST.find((s) => s.id === activeService.id)?.secondaryImage ||
+                          SERVICES_LIST.find((s) => s.id === activeService.id)?.image ||
+                          activeService.secondaryImage ||
+                          activeService.image
+                        }
                         alt={`${activeService.title} secondary view`}
                         label={`${activeService.shortTitle} Secondary Image`}
                         section="Core Contracting Services"
@@ -898,7 +907,7 @@ export const ServicesAndTrainingSection: React.FC<ServicesAndTrainingSectionProp
                       <div className="aspect-[16/10] sm:aspect-auto sm:h-52 bg-[#0A0A0A] border-b border-[#FECACA] overflow-hidden relative">
                         <CmsImage
                           src={fab.image}
-                          defaultSrc={fab.image}
+                          defaultSrc={DEFAULT_FABRICATION_PORTFOLIO.find((p) => p.id === fab.id)?.image || fab.image}
                           alt={fab.title}
                           label={`${fab.title} Image`}
                           section="Fabrication Portfolio"
@@ -915,7 +924,7 @@ export const ServicesAndTrainingSection: React.FC<ServicesAndTrainingSectionProp
                             type="button"
                             data-cms-explicit="true"
                             onClick={() => handleDeletePortfolio(fab.id)}
-                            className="absolute top-3 right-3 z-40 p-1.5 rounded-lg bg-[#DC2626] text-white hover:bg-red-700 shadow-md cursor-pointer"
+                            className="absolute top-3 right-3 z-50 p-1.5 rounded-lg bg-[#DC2626] text-white hover:bg-red-700 shadow-md cursor-pointer"
                             title="Delete Portfolio Card"
                           >
                             <Trash2 className="w-3.5 h-3.5" />

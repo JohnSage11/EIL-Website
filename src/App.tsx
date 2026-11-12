@@ -171,18 +171,48 @@ export default function App() {
   const logoTapCountRef = useRef<number>(0);
   const logoTapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cmsDataRef = useRef<EilCmsData>(cmsData);
+  const isAdminEditingActiveRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    cmsDataRef.current = cmsData;
+  }, [cmsData]);
+
+  useEffect(() => {
+    isAdminEditingActiveRef.current = Boolean(
+      isCmsEditMode ||
+        editingCmsField ||
+        universalEditorReq ||
+        cmsAllFieldsDrawerOpen ||
+        hasUnsavedCmsChanges
+    );
+  }, [
+    isCmsEditMode,
+    editingCmsField,
+    universalEditorReq,
+    cmsAllFieldsDrawerOpen,
+    hasUnsavedCmsChanges,
+  ]);
 
   // Sync CMS state from shared persistent backend (/cms-api.php or /api/cms) on load, focus & tab visibility
   useEffect(() => {
     let active = true;
 
-    const syncFromServer = () => {
+    const syncFromServer = (isInitialLoad = false) => {
+      // Never interrupt an active Admin CMS editing or file-upload session when the OS file picker closes (window.focus)
+      if (!isInitialLoad && isAdminEditingActiveRef.current) {
+        return;
+      }
       fetchSharedCmsData().then((remoteData) => {
         if (active && remoteData) {
+          if (!isInitialLoad && isAdminEditingActiveRef.current) {
+            return;
+          }
           setCmsData((prev) => {
             const prevTs = typeof prev.updatedAt === 'number' ? prev.updatedAt : 0;
             const remoteTs = typeof remoteData.updatedAt === 'number' ? remoteData.updatedAt : 0;
-            if (remoteTs >= prevTs) {
+            if (remoteTs > prevTs || prevTs === 0) {
+              cmsDataRef.current = remoteData;
               return remoteData;
             }
             return prev;
@@ -191,17 +221,19 @@ export default function App() {
       });
     };
 
-    syncFromServer();
+    syncFromServer(true);
 
     const handleVisibilityOrFocus = () => {
-      if (document.visibilityState === 'visible') {
-        syncFromServer();
+      if (document.visibilityState === 'visible' && !isAdminEditingActiveRef.current) {
+        syncFromServer(false);
       }
     };
 
     const handleStorageEvent = (e: StorageEvent) => {
       if (e.key === CMS_STORAGE_KEY && e.newValue) {
-        setCmsData(loadLocalCmsData());
+        const loaded = loadLocalCmsData();
+        cmsDataRef.current = loaded;
+        setCmsData(loaded);
       }
     };
 
@@ -225,7 +257,7 @@ export default function App() {
       void saveSharedCmsData(nextData, 'save').then(() => {
         setHasUnsavedCmsChanges(false);
       });
-    }, 300);
+    }, 250);
   }, []);
 
   const handleBrandLogoClick = () => {
@@ -267,6 +299,7 @@ export default function App() {
           updatedAt: Date.now(),
           _isFactoryDefault: false,
         };
+        cmsDataRef.current = next;
         saveLocalCmsData(next);
         scheduleAutoSaveToServer(next);
         return next;
@@ -285,6 +318,7 @@ export default function App() {
           updatedAt: Date.now(),
           _isFactoryDefault: false,
         };
+        cmsDataRef.current = next;
         saveLocalCmsData(next);
         scheduleAutoSaveToServer(next);
         return next;
@@ -305,6 +339,13 @@ export default function App() {
   const getImage = useCallback(
     (key: string, defaultSrc: string) => {
       const val = cmsData.customImages?.[key];
+      if (val !== undefined && val.length > 0 && val !== defaultSrc) {
+        return val;
+      }
+      const aiOverride = cmsData.customImages?.[`ai_default_${defaultSrc}`];
+      if (aiOverride && aiOverride.length > 0) {
+        return aiOverride;
+      }
       return val !== undefined && val.length > 0 ? val : defaultSrc;
     },
     [cmsData.customImages]
@@ -338,11 +379,13 @@ export default function App() {
     }
     setIsSavingCms(true);
     try {
+      const currentSnapshot = cmsDataRef.current;
       const next: EilCmsData = {
-        ...cmsData,
+        ...currentSnapshot,
         updatedAt: Date.now(),
         _isFactoryDefault: false,
       };
+      cmsDataRef.current = next;
       setCmsData(next);
       await saveSharedCmsData(next, 'save');
       setHasUnsavedCmsChanges(false);
@@ -360,6 +403,7 @@ export default function App() {
     setIsSavingCms(true);
     try {
       const restored = await resetSharedCmsData();
+      cmsDataRef.current = restored;
       setCmsData(restored);
       setHasUnsavedCmsChanges(false);
       setEditingCmsField(null);
@@ -3382,6 +3426,7 @@ export default function App() {
           onClose={() => setCmsAllFieldsDrawerOpen(false)}
           cmsData={cmsData}
           onUpdateField={handleUpdateCmsField}
+          updateCmsData={handleUpdateCmsData}
           onSaveChanges={handleSaveCmsChanges}
           onRequestRestoreDefaults={() => {
             setCmsAllFieldsDrawerOpen(false);

@@ -42,16 +42,19 @@ function offloadBase64Images($value, $uploadsDir) {
             }
             $binary = @base64_decode($matches[2]);
             if ($binary !== false && strlen($binary) > 64) {
-                $hash = substr(md5($binary), 0, 16);
+                $hash = substr(md5($binary), 0, 16) . '_' . strlen($binary);
                 $fileName = 'cms_img_' . $hash . '.' . $ext;
                 $filePath = $uploadsDir . '/' . $fileName;
                 if (!file_exists($filePath)) {
                     @file_put_contents($filePath, $binary, LOCK_EX);
                     @chmod($filePath, 0664);
                 }
-                if (file_exists($filePath)) {
+                // Keep compact auto-dimensioned images (<= 350 KB) inline as data URLs
+                // so they are 100% self-contained even if /uploads/ permissions vary
+                if (strlen($binary) > 358400 && file_exists($filePath)) {
                     return 'uploads/' . $fileName;
                 }
+                return $value;
             }
         }
         return $value;

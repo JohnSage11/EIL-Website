@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import express from 'express';
 import fs from 'fs';
 import path from 'path';
@@ -310,7 +311,7 @@ async function startServer() {
         try {
           const buf = Buffer.from(match[2], 'base64');
           if (buf.length > 64) {
-            const hash = buf.subarray(0, 32).toString('hex').slice(0, 16) + '_' + buf.length;
+            const hash = crypto.createHash('md5').update(buf).digest('hex').slice(0, 16) + '_' + buf.length;
             const fileName = `cms_img_${hash}.${ext}`;
             const filePath = path.join(UPLOADS_DIR, fileName);
             if (!fs.existsSync(filePath)) {
@@ -324,7 +325,12 @@ async function startServer() {
             if (!fs.existsSync(publicFilePath)) {
               fs.writeFileSync(publicFilePath, buf);
             }
-            return `uploads/${fileName}`;
+            // Keep compact auto-dimensioned images (<= 350 KB) inline as self-contained data URLs
+            // so container restarts or static hosts never break uploaded image references
+            if (buf.length > 350 * 1024) {
+              return `uploads/${fileName}`;
+            }
+            return val;
           }
         } catch {
           // keep original string

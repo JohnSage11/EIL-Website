@@ -678,25 +678,21 @@ export const DEFAULT_EIL_CMS_DATA: EilCmsData = {
 };
 
 function isLegacyGasOrInvalidCmsPayload(raw: Record<string, unknown>): boolean {
-  let serialized = '';
-  try {
-    serialized = JSON.stringify(raw);
-  } catch {
-    serialized = '';
-  }
+  // IMPORTANT: Never run regex over JSON.stringify(raw) because base64 image strings
+  // (data:image/jpeg;base64,...) contain 50,000+ random alphanumeric characters that can
+  // match short words like "Atako" or "Umuazu" and falsely wipe out uploaded images!
+  const headerSample = [
+    typeof raw.heroBadge === 'string' ? raw.heroBadge : '',
+    typeof raw.heroTitlePrefix === 'string' ? raw.heroTitlePrefix : '',
+    typeof raw.heroTitleHighlight === 'string' ? raw.heroTitleHighlight : '',
+    typeof raw.heroTitleSuffix === 'string' ? raw.heroTitleSuffix : '',
+    typeof raw.divisionsTitleHighlight === 'string' ? raw.divisionsTitleHighlight : '',
+  ].join(' ');
 
   if (
-    /B\.O\.C|Air Liquide|Gas & Welding|Industrial Gas|Oxy-Acetylene|081-5926|070-4617|084-301|2349066861289|Atako|Igbo Etche|Umuazu|images\.unsplash\.com|eil_logo_clean|pdf_img_041|pdf_img_190|Heavy Equipment Hiring, Plant Leasing & Haulage Services Across Nigeria\./i.test(
-      serialized
+    /B\.O\.C|Air Liquide|Gas & Welding|Industrial Gas|Oxy-Acetylene/i.test(
+      headerSample
     )
-  ) {
-    return true;
-  }
-
-  if (
-    Array.isArray(raw.stockCatalogue) &&
-    raw.stockCatalogue.length > 0 &&
-    raw.stockCatalogue.every((it: { pointsEligible?: boolean }) => it?.pointsEligible === true)
   ) {
     return true;
   }
@@ -811,9 +807,6 @@ export function saveLocalCmsData(data: EilCmsData): void {
 }
 
 export async function fetchSharedCmsData(): Promise<EilCmsData | null> {
-  const localData = loadLocalCmsData();
-  const localUpdatedAt = typeof localData.updatedAt === 'number' ? localData.updatedAt : 0;
-
   const endpoints = ['./cms-api.php', '/cms-api.php', '/api/cms'];
   const cacheBust = `?t=${Date.now()}`;
 
@@ -849,6 +842,12 @@ export async function fetchSharedCmsData(): Promise<EilCmsData | null> {
 
       if (!json || json.ok !== true) continue;
 
+      // Re-read local storage AFTER network fetch completes so any local upload/edit
+      // made while the request was in-flight is never overwritten by older server data
+      const latestLocalData = loadLocalCmsData();
+      const latestLocalUpdatedAt =
+        typeof latestLocalData.updatedAt === 'number' ? latestLocalData.updatedAt : 0;
+
       const hasSavedState = json.hasSavedState !== false && (Boolean(json.cmsData) || json.isDefault === true);
       const serverUpdatedAt =
         typeof json.updatedAt === 'number'
@@ -859,27 +858,27 @@ export async function fetchSharedCmsData(): Promise<EilCmsData | null> {
 
       // Case A: Server has no saved state file yet (e.g. fresh server or restarted container)
       if (!hasSavedState || serverUpdatedAt === 0) {
-        if (localUpdatedAt > 0) {
+        if (latestLocalUpdatedAt > 0) {
           // Device cache has a valid Admin state — facilitate persistence by re-seeding the server!
           void saveSharedCmsData(
-            localData,
-            localData._isFactoryDefault ? 'reset' : 'save'
+            latestLocalData,
+            latestLocalData._isFactoryDefault ? 'reset' : 'save'
           );
-          return localData;
+          return latestLocalData;
         }
         return null;
       }
 
-      // Case B: Device cache has a NEWER state than the server (localUpdatedAt > serverUpdatedAt)
-      if (localUpdatedAt > serverUpdatedAt) {
+      // Case B: Device cache has a NEWER state than the server (latestLocalUpdatedAt > serverUpdatedAt)
+      if (latestLocalUpdatedAt > serverUpdatedAt) {
         void saveSharedCmsData(
-          localData,
-          localData._isFactoryDefault ? 'reset' : 'save'
+          latestLocalData,
+          latestLocalData._isFactoryDefault ? 'reset' : 'save'
         );
-        return localData;
+        return latestLocalData;
       }
 
-      // Case C: Server has an equal or NEWER state than the device (serverUpdatedAt >= localUpdatedAt)
+      // Case C: Server has an equal or NEWER state than the device (serverUpdatedAt >= latestLocalUpdatedAt)
       const payload = json?.cmsData || json?.data;
 
       // Subcase C1: Server state is an explicit "Restore Factory Defaults" action
@@ -908,7 +907,10 @@ export async function fetchSharedCmsData(): Promise<EilCmsData | null> {
     }
   }
 
-  return localUpdatedAt > 0 ? localData : null;
+  const fallbackLocal = loadLocalCmsData();
+  const fallbackLocalTs =
+    typeof fallbackLocal.updatedAt === 'number' ? fallbackLocal.updatedAt : 0;
+  return fallbackLocalTs > 0 ? fallbackLocal : null;
 }
 
 export async function saveSharedCmsData(
