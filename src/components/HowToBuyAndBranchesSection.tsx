@@ -29,6 +29,10 @@ import {
   CmsImage,
   EilScalarFieldKey,
 } from './StealthCmsAdmin';
+import {
+  resolveAssetUrl,
+  handleBrandLogoError,
+} from './ResilientImage';
 
 interface HowToBuySectionProps {
   onOpenQuoteModal: (prefillService?: string, prefillNotes?: string) => void;
@@ -425,7 +429,8 @@ export const HowToBuySection: React.FC<HowToBuySectionProps> = ({
                   <div className="flex items-start justify-between gap-2 border-b-2 border-[#0A0A0A] pb-4">
                     <div className="flex items-center gap-3 min-w-0">
                       <img
-                        src={cmsData.brandLogoUrl}
+                        src={resolveAssetUrl(cmsData.brandLogoUrl)}
+                        onError={handleBrandLogoError}
                         alt="Emmadios Industrial Limited Official Logo"
                         className="h-10 sm:h-12 w-auto object-contain shrink-0"
                       />

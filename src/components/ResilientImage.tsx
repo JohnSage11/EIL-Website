@@ -1,5 +1,38 @@
 import React, { useState, useEffect } from 'react';
-import { Flame } from 'lucide-react';
+import { Truck } from 'lucide-react';
+
+/**
+ * Normalizes root-relative `/assets/...` paths to relative `assets/...` paths
+ * so images resolve properly both at the root domain (`/`) and inside a
+ * GitHub Pages repository subfolder (`https://<user>.github.io/<repo>/`).
+ */
+export function resolveAssetUrl(src: string): string {
+  if (!src) return src;
+  if (src.startsWith('/assets/')) {
+    return src.slice(1); // 'assets/...'
+  }
+  return src;
+}
+
+/**
+ * Fallback handler for standalone `<img>` tags (such as the EIL brand logo)
+ * when GitHub Pages serves directly from the raw repository root where files
+ * live under `public/assets/...` instead of `assets/...`.
+ */
+export function handleBrandLogoError(
+  e: React.SyntheticEvent<HTMLImageElement, Event>
+): void {
+  const img = e.currentTarget;
+  const currentAttr = img.getAttribute('src') || '';
+  if (
+    currentAttr.startsWith('assets/') &&
+    !currentAttr.startsWith('public/assets/')
+  ) {
+    img.src = `public/${currentAttr}`;
+  } else if (currentAttr.startsWith('/assets/')) {
+    img.src = `public${currentAttr}`;
+  }
+}
 
 interface ResilientImageProps {
   src: string;
@@ -16,35 +49,46 @@ export const ResilientImage: React.FC<ResilientImageProps> = ({
   fallbackLabel,
   eager = false,
 }) => {
+  const normalizedSrc = resolveAssetUrl(src);
   const [hasError, setHasError] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
+  const [usePublicPrefix, setUsePublicPrefix] = useState(false);
 
   useEffect(() => {
     setHasError(false);
     setRetryCount(0);
+    setUsePublicPrefix(false);
   }, [src]);
 
   const isDataOrBlobUrl =
-    src.startsWith('data:') || src.startsWith('blob:');
+    normalizedSrc.startsWith('data:') || normalizedSrc.startsWith('blob:');
 
   const handleImageError = () => {
-    if (!isDataOrBlobUrl && retryCount < 2) {
+    if (
+      !isDataOrBlobUrl &&
+      !usePublicPrefix &&
+      normalizedSrc.startsWith('assets/')
+    ) {
+      setUsePublicPrefix(true);
+      return;
+    }
+    if (!isDataOrBlobUrl && retryCount < 1) {
       window.setTimeout(() => {
         setRetryCount((prev) => prev + 1);
-      }, 600);
+      }, 400);
     } else {
       setHasError(true);
     }
   };
 
-  if (hasError || !src) {
+  if (hasError || !normalizedSrc) {
     return (
       <div
         className={`flex flex-col items-center justify-center bg-[#FEF2F2] text-[#991B1B] p-6 text-center border border-[#FECACA] ${className}`}
         role="img"
         aria-label={alt}
       >
-        <Flame className="w-8 h-8 text-[#DC2626] mb-2 opacity-80" />
+        <Truck className="w-8 h-8 text-[#DC2626] mb-2 opacity-80" />
         <span className="text-xs font-semibold tracking-tight text-[#7F1D1D]">
           {fallbackLabel || alt}
         </span>
@@ -55,10 +99,15 @@ export const ResilientImage: React.FC<ResilientImageProps> = ({
     );
   }
 
+  const baseCandidate =
+    usePublicPrefix && normalizedSrc.startsWith('assets/')
+      ? `public/${normalizedSrc}`
+      : normalizedSrc;
+
   const effectiveSrc =
     !isDataOrBlobUrl && retryCount > 0
-      ? `${src}${src.includes('?') ? '&' : '?'}retry=${retryCount}`
-      : src;
+      ? `${baseCandidate}${baseCandidate.includes('?') ? '&' : '?'}retry=${retryCount}`
+      : baseCandidate;
 
   return (
     <img
@@ -71,4 +120,5 @@ export const ResilientImage: React.FC<ResilientImageProps> = ({
     />
   );
 };
+
 

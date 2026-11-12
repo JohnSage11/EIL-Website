@@ -66,6 +66,10 @@ import {
   RestoreDefaultsConfirmModal,
   StealthAdminToolbar,
 } from './components/StealthCmsAdmin';
+import {
+  resolveAssetUrl,
+  handleBrandLogoError,
+} from './components/ResilientImage';
 import { StockCatalogueSection } from './components/StockCatalogueSection';
 import {
   ServicesAndTrainingSection,
@@ -823,7 +827,8 @@ export default function App() {
           className="flex items-center gap-3 text-left group cursor-pointer"
         >
           <img
-            src={cmsData.brandLogoUrl}
+            src={resolveAssetUrl(cmsData.brandLogoUrl)}
+            onError={handleBrandLogoError}
             alt="Emmadios Industrial Limited Logo"
             className="h-11 sm:h-12 w-auto object-contain group-hover:scale-105 transition-transform"
           />
@@ -1072,7 +1077,8 @@ export default function App() {
                 title="Emmadios Industrial Limited — Home"
               >
                 <img
-                  src={cmsData.brandLogoUrl}
+                  src={resolveAssetUrl(cmsData.brandLogoUrl)}
+                  onError={handleBrandLogoError}
                   alt="Emmadios Industrial Limited (EIL) Official Logo"
                   className="h-8 sm:h-12 lg:h-14 w-auto max-w-[118px] min-[390px]:max-w-[136px] sm:max-w-none object-contain group-hover:scale-105 transition-transform duration-200"
                 />
@@ -3218,7 +3224,8 @@ export default function App() {
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 text-xs text-red-100">
             <div className="flex flex-wrap items-center gap-3 min-w-0">
               <img
-                src={cmsData.brandLogoUrl}
+                src={resolveAssetUrl(cmsData.brandLogoUrl)}
+                onError={handleBrandLogoError}
                 alt="EIL Official Logo"
                 onClick={handleBrandLogoClick}
                 className="h-8 w-auto bg-white px-2 py-1 rounded-md object-contain shrink-0 cursor-pointer select-none"

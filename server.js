@@ -7,11 +7,21 @@ import { createServer as createViteServer } from "vite";
 var __filename = fileURLToPath(import.meta.url);
 var __dirname = path.dirname(__filename);
 var DATA_FILE = path.join(__dirname, "submissions-store.json");
+var UPLOADS_DIR = path.join(__dirname, "uploads");
+if (!fs.existsSync(UPLOADS_DIR)) {
+  try {
+    fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+  } catch (err) {
+    console.error("Failed to create uploads directory:", err);
+  }
+}
 function loadStore() {
   try {
     if (fs.existsSync(DATA_FILE)) {
       const raw = fs.readFileSync(DATA_FILE, "utf-8");
-      return JSON.parse(raw);
+      if (!/Rumueme|Oxy-Acetylene|Gas Equipment|Industrial Gas/i.test(raw)) {
+        return JSON.parse(raw);
+      }
     }
   } catch (err) {
     console.error("Failed to read store:", err);
@@ -23,16 +33,16 @@ function loadStore() {
         createdAt: new Date(Date.now() - 864e5 * 2).toISOString(),
         referenceCode: "EIL-QT-8401",
         customerName: "Engr. Tunde Adebayo",
-        companyName: "Delta Marine & Pipeline Works Ltd",
-        positionTitle: "Lead Fabrication Engineer",
+        companyName: "Delta Marine & Heavy Logistics Ltd",
+        positionTitle: "Plant & Logistics Manager",
         email: "t.adebayo@deltamarine-ng.com",
-        phone: "+234 803 412 8890",
-        serviceType: "Fabrication (Modular Skids, Pipe Bridges, Gangways, Racks)",
-        quantityOrDuration: "2 Modular Skids + 45m Pipe Spooling",
+        phone: "+234 703 825 9142",
+        serviceType: "Equipment Hiring / Leasing (Forklifts, Excavators, Dozers, Cranes, Backhoes)",
+        quantityOrDuration: "1x 50T Mobile Crane + 1x 20T Excavator (Flexible Project Schedule)",
         location: "Trans-Amadi Industrial Layout, Port Harcourt",
-        preferredBranch: "Corporate Head Office \u2014 Rumueme, Port Harcourt",
-        projectNotes: "Carbon and stainless steel pipe spool fabrication to ASME/nuclear sector standard with on-site installation.",
-        attachmentName: "DM_Modular_Skid_Isometrics_Rev3.pdf",
+        preferredBranch: "Port Harcourt Head Office \u2014 Plot 213, Old Aba Road, Rumuogba-Obio",
+        projectNotes: "Heavy crane lifting and earthmoving support with lowbed mobilization to project site.",
+        attachmentName: "Site_Mobilization_Scope_Rev3.pdf",
         attachmentSize: 428500,
         attachmentType: "application/pdf",
         status: "Reviewed"
@@ -44,43 +54,43 @@ function loadStore() {
         createdAt: new Date(Date.now() - 36e5 * 14).toISOString(),
         referenceCode: "EIL-ENQ-5092",
         customerName: "Chukwuma Okafor",
-        companyName: "Rivers Heavy Fabrication Contractors",
-        email: "procurement@riversfab.com",
-        phone: "+234 706 119 3400",
+        companyName: "Rivers Civil & Marine Contractors",
+        email: "procurement@riverscivil.com",
+        phone: "+234 703 825 9142",
         orderMode: "EIL Point Card Voucher",
         pointCardNumber: "EIL-PC-00419",
-        preferredBranch: "Old Aba Road Branch \u2014 Port Harcourt",
+        preferredBranch: "Port Harcourt Head Office \u2014 Plot 213, Old Aba Road, Rumuogba-Obio",
         deliveryAddress: "Plot 44 Onne Oil & Gas Free Zone, Rivers State",
-        notes: "Mix and match manifold rack delivery required with crane lift certification.",
+        notes: "Lowbed trailer mobilization required for excavator and forklift deployment to Onne site.",
         items: [
           {
-            id: "ge-mixer-1",
-            name: "Heavy-Duty Acetylene Mixer (Combi Mixer)",
-            category: "Gas Equipment",
-            subcategory: "Mixers (Combi Mixers)",
-            spec: "Combi Heavy-Duty Oxy-Acetylene Torch Mixer",
-            quantity: 4,
-            unit: "Units",
-            pointsEligible: true
-          },
-          {
-            id: "ge-reg-1",
-            name: "Series 9500 Multi-Stage Regulator (Oxygen)",
-            category: "Gas Equipment",
-            subcategory: "Industrial Regulators",
-            spec: "Heavy-Duty Multi-Stage Oxygen Pressure Regulator",
-            quantity: 4,
-            unit: "Units",
-            pointsEligible: true
-          },
-          {
-            id: "gas-del-2",
-            name: "Compressed Cylinders in Lift-Tested Racks",
-            category: "Industrial Gas",
-            subcategory: "Gas Delivery Options",
-            spec: "Mix & Match 2x Oxygen, 1x Acetylene, 1x Argon Bank",
+            id: "fk-5t-diesel",
+            name: "5-Ton Heavy-Duty Diesel Forklift",
+            category: "Forklifts (All Tonnages)",
+            subcategory: "3T \u2013 7T Industrial Forklifts",
+            spec: "5,000 kg Rated Load \xB7 Dual-Stage Mast \xB7 Yard & Warehouse Lifting",
             quantity: 2,
-            unit: "Racks",
+            unit: "Units (Hire)",
+            pointsEligible: true
+          },
+          {
+            id: "ex-20t-30t-tracked",
+            name: "20T \u2013 30T Hydraulic Tracked Excavator (CAT 320 / 330 Class)",
+            category: "Excavators & Earthmoving",
+            subcategory: "Tracked Hydraulic Excavators",
+            spec: "1.2 m\xB3 \u2013 1.8 m\xB3 Bucket \xB7 Heavy Trenching, Dredging & Civil Earthworks",
+            quantity: 1,
+            unit: "Units (Hire)",
+            pointsEligible: true
+          },
+          {
+            id: "hl-lowbed-40t-60t",
+            name: "40T \u2013 60T Multi-Axle Lowbed Trailer (Equipment Carrier)",
+            category: "Haulage Services (Trucks & Trailers)",
+            subcategory: "Lowbed Trailers",
+            spec: "Hydraulic Rear Ramps \xB7 Heavy Winch \xB7 Outriggers for Excavators & Dozers",
+            quantity: 1,
+            unit: "Trips / Charter",
             pointsEligible: true
           }
         ],
@@ -98,9 +108,160 @@ function saveStore(data) {
     console.error("Failed to write store:", err);
   }
 }
+function sanitizeSegment(input) {
+  return String(input || "").replace(/[^a-zA-Z0-9._-]/g, "_");
+}
+async function uploadBufferToPublicCloud(buffer, fileName, mimeType) {
+  const safeName = sanitizeSegment(fileName) || "document.pdf";
+  const contentType = mimeType || "application/octet-stream";
+  const uint8 = new Uint8Array(buffer);
+  try {
+    const form = new FormData();
+    form.append("file", new Blob([uint8], { type: contentType }), safeName);
+    form.append("expire", "0");
+    const resp = await fetch("https://api.onlyfiles.com/v1/upload", {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "X-Requested-With": "XMLHttpRequest"
+      },
+      body: form
+    });
+    if (resp.ok) {
+      const data = await resp.json();
+      const fullUrl = data?.data?.file?.url?.full || data?.data?.file?.url?.short || "";
+      if (fullUrl && fullUrl.startsWith("http")) {
+        return fullUrl;
+      }
+    }
+  } catch {
+  }
+  try {
+    const form = new FormData();
+    form.append("reqtype", "fileupload");
+    form.append("fileToUpload", new Blob([uint8], { type: contentType }), safeName);
+    const resp = await fetch("https://catbox.moe/user/api.php", {
+      method: "POST",
+      body: form
+    });
+    if (resp.ok) {
+      const urlText = (await resp.text()).trim();
+      if (urlText.startsWith("https://")) {
+        return urlText;
+      }
+    }
+  } catch {
+  }
+  return "";
+}
 async function startServer() {
   const app = express();
-  app.use(express.json({ limit: "10mb" }));
+  app.use(express.json({ limit: "25mb" }));
+  app.post("/api/attachments", async (req, res) => {
+    try {
+      const { attachmentId, fileName, mimeType, base64Data } = req.body || {};
+      if (!attachmentId || !fileName || !base64Data) {
+        return res.status(400).json({ error: "Missing attachment fields" });
+      }
+      const safeId = sanitizeSegment(attachmentId);
+      const safeName = sanitizeSegment(fileName);
+      const storedFilePath = path.join(UPLOADS_DIR, `${safeId}__${safeName}`);
+      const metaFilePath = path.join(UPLOADS_DIR, `${safeId}__${safeName}.meta.json`);
+      const cleanedBase64 = String(base64Data).includes(",") ? String(base64Data).split(",")[1] : String(base64Data);
+      const buffer = Buffer.from(cleanedBase64, "base64");
+      fs.writeFileSync(storedFilePath, buffer);
+      fs.writeFileSync(
+        metaFilePath,
+        JSON.stringify({
+          originalName: fileName,
+          safeName,
+          mimeType: mimeType || "application/octet-stream",
+          size: buffer.length,
+          uploadedAt: (/* @__PURE__ */ new Date()).toISOString()
+        }),
+        "utf-8"
+      );
+      const relativeUrl = `/api/attachments/${encodeURIComponent(safeId)}/${encodeURIComponent(safeName)}`;
+      const cloudUrl = await uploadBufferToPublicCloud(
+        buffer,
+        fileName,
+        mimeType || "application/octet-stream"
+      );
+      return res.status(201).json({
+        ok: true,
+        attachmentId: safeId,
+        fileName: safeName,
+        attachmentUrl: cloudUrl || relativeUrl,
+        publicCloudUrl: cloudUrl || "",
+        localUrl: relativeUrl
+      });
+    } catch (err) {
+      console.error("Failed to store attachment:", err);
+      return res.status(500).json({ error: "Failed to store attachment" });
+    }
+  });
+  const CMS_FILE = path.join(__dirname, "cms-store.json");
+  app.get("/api/cms", (_req, res) => {
+    try {
+      if (fs.existsSync(CMS_FILE)) {
+        const raw = fs.readFileSync(CMS_FILE, "utf-8");
+        const cmsData = JSON.parse(raw);
+        return res.json({ ok: true, isDefault: false, cmsData });
+      }
+    } catch (err) {
+      console.error("Failed to read CMS store:", err);
+    }
+    return res.json({ ok: true, isDefault: true, cmsData: null });
+  });
+  app.post("/api/cms", (req, res) => {
+    try {
+      const { cmsData } = req.body || {};
+      if (!cmsData || typeof cmsData !== "object") {
+        return res.status(400).json({ ok: false, error: "Invalid cmsData payload" });
+      }
+      fs.writeFileSync(CMS_FILE, JSON.stringify(cmsData, null, 2), "utf-8");
+      return res.json({ ok: true, isDefault: false, cmsData });
+    } catch (err) {
+      console.error("Failed to write CMS store:", err);
+      return res.status(500).json({ ok: false, error: "Failed to save CMS state" });
+    }
+  });
+  app.delete("/api/cms", (_req, res) => {
+    try {
+      if (fs.existsSync(CMS_FILE)) {
+        fs.unlinkSync(CMS_FILE);
+      }
+      return res.json({ ok: true, isDefault: true, cmsData: null });
+    } catch (err) {
+      console.error("Failed to delete CMS store:", err);
+      return res.status(500).json({ ok: false, error: "Failed to reset CMS state" });
+    }
+  });
+  app.get("/api/attachments/:attachmentId/:fileName", (req, res) => {
+    const safeId = sanitizeSegment(req.params.attachmentId);
+    const safeName = sanitizeSegment(req.params.fileName);
+    const storedFilePath = path.join(UPLOADS_DIR, `${safeId}__${safeName}`);
+    const metaFilePath = path.join(UPLOADS_DIR, `${safeId}__${safeName}.meta.json`);
+    if (!fs.existsSync(storedFilePath)) {
+      return res.status(404).send("Attachment not found.");
+    }
+    let mimeType = "application/octet-stream";
+    let downloadName = safeName;
+    if (fs.existsSync(metaFilePath)) {
+      try {
+        const meta = JSON.parse(fs.readFileSync(metaFilePath, "utf-8"));
+        if (meta.mimeType) mimeType = meta.mimeType;
+        if (meta.originalName) downloadName = meta.originalName;
+      } catch {
+      }
+    }
+    res.setHeader("Content-Type", mimeType);
+    res.setHeader(
+      "Content-Disposition",
+      `inline; filename="${String(downloadName).replace(/"/g, "")}"`
+    );
+    return res.sendFile(storedFilePath);
+  });
   app.get("/api/submissions", (_req, res) => {
     const store = loadStore();
     res.json(store);
@@ -108,7 +269,7 @@ async function startServer() {
   app.post("/api/quotes", (req, res) => {
     const store = loadStore();
     const body = req.body;
-    const referenceCode = `EIL-QT-${Math.floor(1e3 + Math.random() * 9e3)}`;
+    const referenceCode = body.referenceCode || `EIL-QT-${Math.floor(1e3 + Math.random() * 9e3)}`;
     const newQuote = {
       id: `q-${Date.now()}`,
       createdAt: (/* @__PURE__ */ new Date()).toISOString(),
@@ -118,24 +279,25 @@ async function startServer() {
       positionTitle: body.positionTitle || "",
       email: body.email || "",
       phone: body.phone || "",
-      serviceType: body.serviceType || "Fabrication",
+      serviceType: body.serviceType || "Equipment Hiring / Leasing",
       quantityOrDuration: body.quantityOrDuration || "",
       location: body.location || "Nigeria",
-      preferredBranch: body.preferredBranch || "Corporate Head Office \u2014 Rumueme, Port Harcourt",
+      preferredBranch: body.preferredBranch || "Port Harcourt Head Office \u2014 Plot 213, Old Aba Road, Rumuogba-Obio",
       projectNotes: body.projectNotes || "",
       attachmentName: body.attachmentName,
       attachmentSize: body.attachmentSize,
       attachmentType: body.attachmentType,
+      attachmentUrl: body.attachmentUrl,
       status: "New"
     };
     store.quotes.unshift(newQuote);
     saveStore(store);
-    res.status(201).json(newQuote);
+    res.status(201).json({ submission: newQuote });
   });
   app.post("/api/enquiries", (req, res) => {
     const store = loadStore();
     const body = req.body;
-    const referenceCode = `EIL-ENQ-${Math.floor(1e3 + Math.random() * 9e3)}`;
+    const referenceCode = body.referenceCode || `EIL-ENQ-${Math.floor(1e3 + Math.random() * 9e3)}`;
     const newEnquiry = {
       id: `e-${Date.now()}`,
       createdAt: (/* @__PURE__ */ new Date()).toISOString(),
@@ -146,16 +308,17 @@ async function startServer() {
       phone: body.phone || "",
       orderMode: body.orderMode || "Registered Customer Order",
       pointCardNumber: body.pointCardNumber || "",
-      preferredBranch: body.preferredBranch || "Corporate Head Office \u2014 Rumueme, Port Harcourt",
+      preferredBranch: body.preferredBranch || "Port Harcourt Head Office \u2014 Plot 213, Old Aba Road, Rumuogba-Obio",
       deliveryAddress: body.deliveryAddress || "",
       notes: body.notes || "",
       attachmentName: body.attachmentName,
+      attachmentUrl: body.attachmentUrl,
       items: Array.isArray(body.items) ? body.items : [],
       status: "New"
     };
     store.enquiries.unshift(newEnquiry);
     saveStore(store);
-    res.status(201).json(newEnquiry);
+    res.status(201).json({ submission: newEnquiry });
   });
   app.patch("/api/submissions/:type/:id/status", (req, res) => {
     const { type, id } = req.params;
@@ -182,7 +345,7 @@ async function startServer() {
   if (fs.existsSync(publicPath)) {
     app.use(express.static(publicPath));
   }
-  const isProd = process.env.NODE_ENV === "production" || fs.existsSync(path.join(__dirname, "dist", "index.html"));
+  const isProd = process.env.NODE_ENV === "production";
   if (!isProd || process.env.VITE_DEV === "true") {
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -196,7 +359,7 @@ async function startServer() {
       res.sendFile(path.join(distPath, "index.html"));
     });
   }
-  const PORT = Number(process.env.PORT) || 3e3;
+  const PORT = 3e3;
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`EIL Server running on http://0.0.0.0:${PORT}`);
   });
