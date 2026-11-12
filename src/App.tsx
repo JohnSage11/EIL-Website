@@ -1006,8 +1006,6 @@ export default function App() {
     </div>
   );
 
-  const canGoBack = historyDepth > 0 || activePage !== 'home';
-
   const renderSubPageBackButton = () => (
     <div data-cms-ignore="true" className="mb-3">
       <button
@@ -1058,20 +1056,8 @@ export default function App() {
            ===================================================================== */}
         <header className="sticky top-0 z-40 h-[68px] lg:h-22 bg-white/95 backdrop-blur-md border-b-2 border-[#0A0A0A]/10 shadow-xs">
           <div className="max-w-7xl mx-auto h-full px-3 sm:px-6 lg:px-8 flex items-center justify-between gap-1.5 sm:gap-4">
-            {/* Zone 1: Back Button (when navigated) + Official EIL Logo (10-Tap Stealth CMS Trigger) */}
+            {/* Zone 1: Official EIL Logo (10-Tap Stealth CMS Trigger) */}
             <div data-cms-ignore="true" className="flex items-center gap-1.5 sm:gap-2.5 min-w-0 shrink">
-              {canGoBack && (
-                <button
-                  type="button"
-                  onClick={handleGoBack}
-                  className="inline-flex items-center justify-center gap-1.5 min-h-[38px] min-w-[38px] sm:min-h-[40px] sm:min-w-[40px] px-2 sm:px-3 py-1.5 rounded-full border-2 border-[#0A0A0A]/15 hover:border-[#DC2626] bg-[#FFF8F8] hover:bg-[#DC2626] text-[#0A0A0A] hover:text-white text-xs font-extrabold transition-all duration-200 cursor-pointer group shrink-0"
-                  title="Go back to previous page"
-                  aria-label="Go back to previous page"
-                >
-                  <ArrowLeft className="w-4 h-4 text-[#DC2626] group-hover:text-white group-hover:-translate-x-0.5 transition-transform" />
-                  <span className="hidden sm:inline">Back</span>
-                </button>
-              )}
               <button
                 type="button"
                 onClick={handleBrandLogoClick}
