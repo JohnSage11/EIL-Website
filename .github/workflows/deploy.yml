@@ -1,4 +1,4 @@
-name: Deploy to GitHub Pages
+name: Build and Deploy to Server via FTP
 
 on:
   push:
@@ -7,15 +7,6 @@ on:
       - master
   workflow_dispatch:
 
-permissions:
-  contents: read
-  pages: write
-  id-token: write
-
-concurrency:
-  group: 'pages'
-  cancel-in-progress: true
-
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
@@ -23,32 +14,33 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Node.js
+      - name: Set up Node.js 20
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
       - name: Install dependencies
-        run: npm install --legacy-peer-deps --no-audit --no-fund
+        run: npm install --legacy-peer-deps
 
       - name: Build production bundle
-        run: npx vite build
+        run: npm run build
 
-      - name: Configure GitHub Pages
-        id: configure
-        uses: actions/configure-pages@v5
-        continue-on-error: true
-
-      - name: Upload dist artifact
-        id: upload
-        if: steps.configure.outcome == 'success'
-        uses: actions/upload-pages-artifact@v3
+      - name: Deploy ./dist/ to Server via FTP
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
-          path: './dist'
-        continue-on-error: true
-
-      - name: Deploy to GitHub Pages
-        id: deployment
-        if: steps.configure.outcome == 'success'
-        uses: actions/deploy-pages@v4
-        continue-on-error: true
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          local-dir: ./dist/
+          server-dir: ./
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/node_modules/**
+            cms-data.json
+            **/cms-data.json
+            cms-store.json
+            **/cms-store.json
+            uploads/**
+            .htaccess
+            **/.htaccess
